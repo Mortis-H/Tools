@@ -2,9 +2,25 @@
 
 Personal browser-based tools.
 
+GitHub Pages root:
+
+```text
+https://mortis-h.github.io/Tools/
+```
+
 ## Timeline Discussion Canvas
 
-Open `index.html` in a browser, or host it through GitHub Pages.
+Path:
+
+```text
+timeline-discussion-canvas/index.html
+```
+
+GitHub Pages URL:
+
+```text
+https://mortis-h.github.io/Tools/timeline-discussion-canvas/
+```
 
 This is a self-contained front-end tool for sketching timeline discussions:
 
