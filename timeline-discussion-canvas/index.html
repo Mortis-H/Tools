@@ -1017,6 +1017,7 @@
       model.view.scale = 1;
       model.view.tx = 0;
       model.view.ty = 0;
+      setTimeViewport(0, model.axis.max);
       render();
     });
     document.getElementById("zoomInTime").addEventListener("click", () => zoomTime(0.5));
