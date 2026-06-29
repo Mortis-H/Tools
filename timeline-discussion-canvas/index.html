@@ -286,9 +286,9 @@
   <header>
     <h1>Timeline Discussion Canvas</h1>
     <div class="subtitle">
-      A blank, editable timeline canvas for discussions. Add lanes, duration blocks, and instant signal markers.
-      The X axis is relative schematic time: use it to show ordering and approximate length, not measured cycles unless you explicitly decide to enter measured values. The Time range box only changes the width of this schematic axis.
-      Version: 2026-06-26-1101.
+      A blank, editable timeline canvas for CPFW / AM / silicon discussions. Add lanes, duration blocks, and instant signal markers.
+      The X axis is relative schematic time: use it to show ordering and approximate length, not measured cycles unless you explicitly decide to enter measured values. The Total time box sets the full timeline length; Zoom in/out changes the visible time window like a video editor timeline.
+      Version: 2026-06-29-0856.
     </div>
   </header>
 
@@ -304,7 +304,10 @@
     <button id="exportJson">Export JSON</button>
     <button id="importJson">Import JSON</button>
     <input id="importFile" type="file" accept="application/json,.json" style="display:none" />
-    <input id="axisMax" type="number" min="10" step="10" placeholder="Time range" />
+    <button id="zoomInTime">Zoom in</button>
+    <button id="zoomOutTime">Zoom out</button>
+    <button id="fitTimeline">Fit timeline</button>
+    <input id="axisMax" type="number" min="10" step="10" placeholder="Total time" />
   </div>
 
   <main>
@@ -341,7 +344,7 @@
         { id: "lane-1", label: "Discussion lane", color: "#1e293b", opacity: 0.62 }
       ],
       items: [],
-      view: { scale: 1, tx: 0, ty: 0 }
+      view: { scale: 1, tx: 0, ty: 0, timeStart: 0, timeSpan: 240 }
     };
 
     const state = {
@@ -411,12 +414,39 @@
     }
 
     function x(cycle) {
-      return layout.left + (cycle / model.axis.max) * axisWidth();
+      return layout.left + ((cycle - viewStart()) / viewSpan()) * axisWidth();
     }
 
     function cycleFromViewX(viewX) {
-      const cycle = ((viewX - layout.left) / axisWidth()) * model.axis.max;
+      const cycle = viewStart() + ((viewX - layout.left) / axisWidth()) * viewSpan();
       return Math.round(Math.max(0, Math.min(model.axis.max, cycle)) * 10) / 10;
+    }
+
+    function viewStart() {
+      return Math.max(0, Math.min(model.axis.max - viewSpan(), Number(model.view.timeStart) || 0));
+    }
+
+    function viewSpan() {
+      const fallback = model.axis.max || 240;
+      return Math.max(1, Math.min(model.axis.max, Number(model.view.timeSpan) || fallback));
+    }
+
+    function setTimeViewport(start, span) {
+      const nextSpan = Math.max(1, Math.min(model.axis.max, span));
+      const nextStart = Math.max(0, Math.min(model.axis.max - nextSpan, start));
+      model.view.timeSpan = Math.round(nextSpan * 10) / 10;
+      model.view.timeStart = Math.round(nextStart * 10) / 10;
+    }
+
+    function zoomTime(factor, anchorCycle = null) {
+      const oldStart = viewStart();
+      const oldSpan = viewSpan();
+      const anchor = anchorCycle === null ? oldStart + oldSpan / 2 : anchorCycle;
+      const ratio = (anchor - oldStart) / oldSpan;
+      const newSpan = oldSpan * factor;
+      const newStart = anchor - newSpan * ratio;
+      setTimeViewport(newStart, newSpan);
+      render();
     }
 
     function getLane(id) {
@@ -470,8 +500,11 @@
     function drawAxis(root) {
       const g = make("g");
       if (state.showTimeTicks) {
-        const step = chooseAxisStep(model.axis.max);
-        for (let c = 0; c <= model.axis.max; c += step) {
+        const step = chooseAxisStep(viewSpan());
+        const start = Math.floor(viewStart() / step) * step;
+        const end = viewStart() + viewSpan();
+        for (let c = start; c <= end + step; c += step) {
+          if (c < 0 || c > model.axis.max) continue;
           const xx = x(c);
           g.appendChild(make("line", { class: "gridLine", x1: xx, y1: 38, x2: xx, y2: contentHeight() - 30 }));
           g.appendChild(make("text", { class: "cycleLabel", x: xx - 10, y: 14 }, c));
@@ -952,6 +985,13 @@
       model.axis = payload.axis || { label: "Relative time (schematic)", max: 240 };
       model.axis.max = Math.max(10, Number(model.axis.max) || 240);
       model.axis.label = model.axis.label || "Relative time (schematic)";
+      model.view = payload.view || { scale: 1, tx: 0, ty: 0 };
+      if (typeof model.view.scale !== "number") model.view.scale = 1;
+      if (typeof model.view.tx !== "number") model.view.tx = 0;
+      if (typeof model.view.ty !== "number") model.view.ty = 0;
+      if (typeof model.view.timeSpan !== "number") model.view.timeSpan = model.axis.max;
+      if (typeof model.view.timeStart !== "number") model.view.timeStart = 0;
+      setTimeViewport(model.view.timeStart, model.view.timeSpan);
       model.lanes = payload.lanes.length ? payload.lanes : [{ id: "lane-1", label: "Lane 1" }];
       for (const lane of model.lanes) {
         if (!lane.color) lane.color = "#1e293b";
@@ -959,7 +999,6 @@
       }
       const laneIds = new Set(model.lanes.map(lane => lane.id));
       model.items = (payload.items || []).filter(item => laneIds.has(item.laneId));
-      model.view = payload.view || { scale: 1, tx: 0, ty: 0 };
       state.showTimeTicks = payload.showTimeTicks !== false;
       document.getElementById("toggleTimeTicks").classList.toggle("active", state.showTimeTicks);
       document.getElementById("toggleTimeTicks").textContent = state.showTimeTicks ? "Hide time ticks" : "Show time ticks";
@@ -975,7 +1014,15 @@
     document.getElementById("deleteSelected").addEventListener("click", deleteSelected);
     document.getElementById("clearCanvas").addEventListener("click", clearCanvas);
     document.getElementById("resetView").addEventListener("click", () => {
-      model.view = { scale: 1, tx: 0, ty: 0 };
+      model.view.scale = 1;
+      model.view.tx = 0;
+      model.view.ty = 0;
+      render();
+    });
+    document.getElementById("zoomInTime").addEventListener("click", () => zoomTime(0.5));
+    document.getElementById("zoomOutTime").addEventListener("click", () => zoomTime(2));
+    document.getElementById("fitTimeline").addEventListener("click", () => {
+      setTimeViewport(0, model.axis.max);
       render();
     });
     document.getElementById("toggleTimeTicks").addEventListener("click", () => {
@@ -989,6 +1036,7 @@
     axisMaxInput.addEventListener("change", () => {
       const nextMax = Math.max(10, Number(axisMaxInput.value) || 240);
       model.axis.max = nextMax;
+      setTimeViewport(viewStart(), Math.min(viewSpan(), nextMax));
       for (const item of model.items) {
         if (item.kind === "signal" || item.kind === "guide") {
           item.cycle = Math.min(item.cycle, nextMax);
@@ -1094,7 +1142,7 @@
     function cycleDeltaFromPointer(ev, startClientX) {
       const rect = svg.getBoundingClientRect();
       const viewDx = (ev.clientX - startClientX) / Math.max(1, rect.width) * layout.viewWidth / Math.max(.001, model.view.scale);
-      return (viewDx / axisWidth()) * model.axis.max;
+      return (viewDx / axisWidth()) * viewSpan();
     }
 
     function resizeSelectedItem(ev) {
@@ -1132,9 +1180,10 @@
 
     svg.addEventListener("wheel", ev => {
       ev.preventDefault();
-      const factor = ev.deltaY < 0 ? 1.08 : .92;
-      model.view.scale = Math.max(.5, Math.min(2.5, model.view.scale * factor));
-      render();
+      const point = viewPointFromClient(ev);
+      const anchorCycle = cycleFromViewX(point.x);
+      const factor = ev.deltaY < 0 ? 0.85 : 1.18;
+      zoomTime(factor, anchorCycle);
     }, { passive: false });
 
     render();
