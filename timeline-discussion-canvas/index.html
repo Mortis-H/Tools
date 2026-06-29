@@ -70,6 +70,14 @@
       border-color: #7dd3fc;
       background: #1e3a5f;
     }
+    button:disabled {
+      opacity: .4;
+      cursor: default;
+    }
+    button:disabled:hover {
+      border-color: #334155;
+      background: #182235;
+    }
     input, textarea {
       user-select: text;
       -webkit-user-select: text;
@@ -288,7 +296,8 @@
     <div class="subtitle">
       A blank, editable timeline canvas for CPFW / AM / silicon discussions. Add lanes, duration blocks, and instant signal markers.
       The X axis is relative schematic time: use it to show ordering and approximate length, not measured cycles unless you explicitly decide to enter measured values. The Total time box sets the full timeline length; Zoom in/out changes the visible time window like a video editor timeline.
-      Version: 2026-06-29-0856.
+      Work autosaves to this browser (localStorage) and is restored on reload. Press Ctrl+Z to undo, Ctrl+Y (or Ctrl+Shift+Z) to redo.
+      Version: 2026-06-29-0935.
     </div>
   </header>
 
@@ -298,6 +307,8 @@
     <button id="addSignal">Add signal</button>
     <button id="addGuide">Add guide</button>
     <button id="deleteSelected">Delete selected</button>
+    <button id="undoBtn" title="Undo (Ctrl+Z)">Undo</button>
+    <button id="redoBtn" title="Redo (Ctrl+Y)">Redo</button>
     <button id="clearCanvas">Clear canvas</button>
     <button id="resetView">Reset view</button>
     <button id="toggleTimeTicks" class="active">Hide time ticks</button>
@@ -489,6 +500,7 @@
       drawAxis(root);
       drawLanes(root);
       drawItems(root);
+      saveLocal();
     }
 
     function scheduleRender() {
@@ -526,19 +538,26 @@
     }
 
     function drawLanes(root) {
+      const scale = Math.max(.001, Number(model.view.scale) || 1);
+      const tx = Number(model.view.tx) || 0;
+      const toLocalX = viewBoxX => (viewBoxX - tx) / scale;
+      const overscan = 24;
+      const bgLeft = toLocalX(-overscan);
+      const bgWidth = (layout.viewWidth + overscan * 2) / scale;
+      const labelX = toLocalX(70);
       model.lanes.forEach((lane, index) => {
         const y = laneY(index);
         const selected = state.selected && state.selected.type === "lane" && state.selected.id === lane.id;
         const laneFill = hexToRgba(lane.color || "#1e293b", lane.opacity ?? 0.62);
         root.appendChild(make("rect", {
           class: selected ? "laneBg laneSelected" : "laneBg",
-          x: 52,
+          x: bgLeft,
           y,
-          width: layout.viewWidth - 90,
+          width: bgWidth,
           height: layout.laneHeight,
           style: `fill:${laneFill}`
         }));
-        const label = make("text", { class: "laneLabel", x: 70, y: y + 24 }, lane.label);
+        const label = make("text", { class: "laneLabel", x: labelX, y: y + 24 }, lane.label);
         label.addEventListener("pointerdown", ev => {
           ev.stopPropagation();
           ev.preventDefault();
@@ -631,6 +650,7 @@
       ev.stopPropagation();
       ev.preventDefault();
       if (state.resizingItem) return;
+      commitHistory();
       if (ev.pointerId !== undefined && svg.setPointerCapture) {
         try { svg.setPointerCapture(ev.pointerId); } catch (_) {}
       }
@@ -646,6 +666,7 @@
       ev.stopPropagation();
       ev.preventDefault();
       if (item.kind === "signal") return;
+      commitHistory();
       if (ev.pointerId !== undefined && svg.setPointerCapture) {
         try { svg.setPointerCapture(ev.pointerId); } catch (_) {}
       }
@@ -686,6 +707,7 @@
     }
 
     function addLane() {
+      commitHistory();
       const lane = { id: `lane-${Date.now()}-${state.laneSeq++}`, label: `Lane ${model.lanes.length + 1}`, color: "#1e293b", opacity: 0.62 };
       model.lanes.push(lane);
       state.selected = { type: "lane", id: lane.id };
@@ -698,6 +720,7 @@
       if (index < 0) return;
       const target = index + direction;
       if (target < 0 || target >= model.lanes.length) return;
+      commitHistory();
       [model.lanes[index], model.lanes[target]] = [model.lanes[target], model.lanes[index]];
       const lane = getLane(laneId);
       state.selected = { type: "lane", id: laneId };
@@ -706,6 +729,7 @@
     }
 
     function addItemAt(ev, kind) {
+      commitHistory();
       const point = viewPointFromClient(ev);
       const lane = laneFromViewY(point.y);
       const cycle = cycleFromViewX(point.x);
@@ -794,6 +818,7 @@
           return;
         }
         if (!confirm(`Delete lane "${lane.label}" and its items?`)) return;
+        commitHistory();
         model.lanes = model.lanes.filter(l => l.id !== lane.id);
         model.items = model.items.filter(item => item.laneId !== lane.id);
         state.selected = null;
@@ -934,12 +959,14 @@
           return;
         }
         if (!confirm(`Delete lane "${lane.label}" and its items?`)) return;
+        commitHistory();
         model.lanes = model.lanes.filter(l => l.id !== lane.id);
         model.items = model.items.filter(item => item.laneId !== lane.id);
       } else {
         const item = getItem(state.selected.id);
         if (!item) return;
         if (!confirm(`Delete "${item.label}"?`)) return;
+        commitHistory();
         model.items = model.items.filter(i => i.id !== item.id);
       }
       state.selected = null;
@@ -949,6 +976,7 @@
 
     function clearCanvas() {
       if (!confirm("Clear all lanes and items?")) return;
+      commitHistory();
       model.lanes = [{ id: `lane-${Date.now()}`, label: "Lane 1", color: "#1e293b", opacity: 0.62 }];
       model.items = [];
       state.selected = null;
@@ -977,10 +1005,7 @@
       URL.revokeObjectURL(url);
     }
 
-    function importJson(payload) {
-      if (!payload || !Array.isArray(payload.lanes) || !Array.isArray(payload.items)) {
-        throw new Error("Invalid canvas JSON: missing lanes or items.");
-      }
+    function hydrate(payload) {
       model.schema = payload.schema || "Timeline_Discussion_Canvas.v1";
       model.axis = payload.axis || { label: "Relative time (schematic)", max: 240 };
       model.axis.max = Math.max(10, Number(model.axis.max) || 240);
@@ -1004,7 +1029,94 @@
       document.getElementById("toggleTimeTicks").textContent = state.showTimeTicks ? "Hide time ticks" : "Show time ticks";
       state.selected = null;
       showEmptyInspector();
+    }
+
+    function importJson(payload) {
+      if (!payload || !Array.isArray(payload.lanes) || !Array.isArray(payload.items)) {
+        throw new Error("Invalid canvas JSON: missing lanes or items.");
+      }
+      commitHistory();
+      hydrate(payload);
       render();
+    }
+
+    const STORAGE_KEY = "timeline_discussion_canvas_autosave_v1";
+    let saveTimer = null;
+
+    function saveLocal() {
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify({
+            schema: model.schema,
+            axis: model.axis,
+            lanes: model.lanes,
+            items: model.items,
+            view: model.view,
+            showTimeTicks: state.showTimeTicks,
+            savedAt: new Date().toISOString()
+          }));
+        } catch (_) {}
+      }, 300);
+    }
+
+    function loadLocal() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return false;
+        const data = JSON.parse(raw);
+        if (!data || !Array.isArray(data.lanes) || !Array.isArray(data.items)) return false;
+        hydrate(data);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    const history = { undo: [], redo: [], limit: 80 };
+
+    function contentSnapshot() {
+      return JSON.stringify({ axis: model.axis, lanes: model.lanes, items: model.items });
+    }
+
+    function commitHistory() {
+      const snap = contentSnapshot();
+      if (history.undo.length && history.undo[history.undo.length - 1] === snap) return;
+      history.undo.push(snap);
+      if (history.undo.length > history.limit) history.undo.shift();
+      history.redo.length = 0;
+      updateHistoryButtons();
+    }
+
+    function applyContentSnapshot(snap) {
+      const data = JSON.parse(snap);
+      model.axis = data.axis;
+      model.lanes = data.lanes.length ? data.lanes : [{ id: `lane-${Date.now()}`, label: "Lane 1", color: "#1e293b", opacity: 0.62 }];
+      model.items = data.items;
+      setTimeViewport(viewStart(), viewSpan());
+      state.selected = null;
+      showEmptyInspector();
+      render();
+      updateHistoryButtons();
+    }
+
+    function undo() {
+      if (!history.undo.length) return;
+      history.redo.push(contentSnapshot());
+      applyContentSnapshot(history.undo.pop());
+    }
+
+    function redo() {
+      if (!history.redo.length) return;
+      history.undo.push(contentSnapshot());
+      applyContentSnapshot(history.redo.pop());
+    }
+
+    function updateHistoryButtons() {
+      const undoBtn = document.getElementById("undoBtn");
+      const redoBtn = document.getElementById("redoBtn");
+      if (undoBtn) undoBtn.disabled = history.undo.length === 0;
+      if (redoBtn) redoBtn.disabled = history.redo.length === 0;
     }
 
     document.getElementById("addLane").addEventListener("click", addLane);
@@ -1012,6 +1124,8 @@
     document.getElementById("addSignal").addEventListener("click", () => setAddMode("signal"));
     document.getElementById("addGuide").addEventListener("click", () => setAddMode("guide"));
     document.getElementById("deleteSelected").addEventListener("click", deleteSelected);
+    document.getElementById("undoBtn").addEventListener("click", undo);
+    document.getElementById("redoBtn").addEventListener("click", redo);
     document.getElementById("clearCanvas").addEventListener("click", clearCanvas);
     document.getElementById("resetView").addEventListener("click", () => {
       model.view.scale = 1;
@@ -1035,6 +1149,7 @@
     document.getElementById("exportJson").addEventListener("click", exportJson);
     document.getElementById("importJson").addEventListener("click", () => importFile.click());
     axisMaxInput.addEventListener("change", () => {
+      commitHistory();
       const nextMax = Math.max(10, Number(axisMaxInput.value) || 240);
       model.axis.max = nextMax;
       setTimeViewport(viewStart(), Math.min(viewSpan(), nextMax));
@@ -1187,6 +1302,23 @@
       zoomTime(factor, anchorCycle);
     }, { passive: false });
 
+    inspector.addEventListener("focusin", commitHistory);
+
+    window.addEventListener("keydown", ev => {
+      if (!(ev.ctrlKey || ev.metaKey)) return;
+      const key = ev.key.toLowerCase();
+      if (key !== "z" && key !== "y") return;
+      const ae = document.activeElement;
+      if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
+      ev.preventDefault();
+      if (key === "y" || (key === "z" && ev.shiftKey)) redo();
+      else undo();
+    });
+
+    loadLocal();
+    history.undo.length = 0;
+    history.redo.length = 0;
+    updateHistoryButtons();
     render();
   </script>
 </body>
