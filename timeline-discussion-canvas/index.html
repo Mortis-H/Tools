@@ -6,95 +6,240 @@
   <title>Timeline Discussion Canvas</title>
   <style>
     :root {
-      --bg: #0f172a;
-      --panel: #111827;
-      --panel2: #172033;
-      --text: #e5e7eb;
-      --muted: #9ca3af;
-      --grid: #334155;
-      --line: #64748b;
-      --blue: #2563eb;
-      --green: #059669;
-      --orange: #ea580c;
-      --red: #be123c;
-      --purple: #7c3aed;
-      --cyan: #0891b2;
-      --gray: #64748b;
+      color-scheme: dark;
+      --background: #111318;
+      --surface: #181b21;
+      --surface-muted: #20242c;
+      --surface-strong: #282d36;
+      --control-bg: #14171d;
+      --canvas-bg: #101319;
+      --canvas-grid: rgba(154, 166, 184, .13);
+      --canvas-dot: rgba(255, 255, 255, .035);
+      --text: #f2f0e8;
+      --text-muted: #aaa79e;
+      --text-soft: #d1cdc2;
+      --border: #343943;
+      --border-strong: #4d535f;
+      --grid: rgba(154, 166, 184, .20);
+      --accent: #d1b56d;
+      --accent-rgb: 209, 181, 109;
+      --accent-soft: rgba(var(--accent-rgb), .14);
+      --danger: #d47a7a;
+      --shadow: 0 14px 28px rgba(0, 0, 0, .30);
+      --selection-shadow: 0 0 0 rgba(0, 0, 0, 0);
+      --svg-label: #f2f0e8;
+      --svg-muted: #aaa79e;
+      --radius-lg: 14px;
+      --radius-md: 10px;
+      --radius-sm: 7px;
+      --chrome-height: 150px;
+    }
+    html[data-theme="light"] {
+      color-scheme: light;
+      --background: #eeece4;
+      --surface: #f8f5eb;
+      --surface-muted: #eee9dc;
+      --surface-strong: #e2dccd;
+      --control-bg: #fbf8ef;
+      --canvas-bg: #f4f0e5;
+      --canvas-grid: rgba(87, 80, 65, .15);
+      --canvas-dot: rgba(35, 31, 24, .06);
+      --text: #24231f;
+      --text-muted: #6d675c;
+      --text-soft: #3e3a33;
+      --border: #d3cbbb;
+      --border-strong: #b8ad99;
+      --grid: rgba(87, 80, 65, .20);
+      --accent: #7c5f2f;
+      --accent-rgb: 124, 95, 47;
+      --accent-soft: rgba(var(--accent-rgb), .12);
+      --danger: #9b3f43;
+      --shadow: 0 12px 24px rgba(80, 64, 40, .13);
+      --svg-label: #2d2a24;
+      --svg-muted: #5d574c;
     }
     * { box-sizing: border-box; }
+    html {
+      min-height: 100%;
+      background: var(--background);
+    }
     body {
+      min-height: 100vh;
       margin: 0;
       color: var(--text);
-      background: var(--bg);
+      background: var(--background);
       font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
       user-select: none;
       -webkit-user-select: none;
     }
     header {
-      padding: 16px 20px 10px;
-      background: linear-gradient(180deg, #111827 0%, #0f172a 100%);
-      border-bottom: 1px solid #243244;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: center;
+      padding: 16px 22px 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
     }
     h1 {
+      margin: 0;
+      letter-spacing: -.025em;
+      font-size: clamp(22px, 2.4vw, 30px);
+      line-height: 1.05;
+    }
+    .kicker {
       margin: 0 0 6px;
-      font-size: 22px;
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 650;
+      letter-spacing: .06em;
     }
     .subtitle {
-      max-width: 1220px;
-      color: var(--muted);
-      line-height: 1.45;
+      max-width: 980px;
+      margin-top: 10px;
+      color: var(--text-muted);
+      line-height: 1.55;
       font-size: 13px;
+    }
+    .metaStrip {
+      display: flex;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 8px;
+      max-width: 520px;
+    }
+    .statusChip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 10px;
+      color: var(--text-soft);
+      background: var(--control-bg);
+      font-size: 12px;
     }
     .toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 5;
       display: flex;
-      gap: 8px;
+      gap: 10px;
       flex-wrap: wrap;
       align-items: center;
-      padding: 10px 20px;
-      border-bottom: 1px solid #243244;
-      background: #0b1220;
+      padding: 10px 22px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, .16);
+    }
+    .toolGroup {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 5px;
+      background: var(--surface-muted);
     }
     button, input, select, textarea {
-      background: #182235;
+      min-height: 36px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
       color: var(--text);
-      border: 1px solid #334155;
-      border-radius: 8px;
-      padding: 7px 9px;
+      background: var(--surface);
       font-size: 13px;
       font-family: inherit;
+      transition: border-color .16s ease, background .16s ease, box-shadow .16s ease, transform .16s ease;
     }
     button {
       cursor: pointer;
+      font-weight: 650;
+      letter-spacing: -.01em;
     }
     button:hover, button.active {
-      border-color: #7dd3fc;
-      background: #1e3a5f;
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), .08);
+    }
+    button:active {
+      transform: translateY(1px);
+    }
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible,
+    .swatch:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
     }
     button:disabled {
-      opacity: .4;
+      opacity: .42;
       cursor: default;
     }
     button:disabled:hover {
-      border-color: #334155;
-      background: #182235;
+      border-color: var(--border);
+      background: var(--surface);
+      box-shadow: none;
+      transform: none;
+    }
+    #addLane, #addBlock, #addSignal, #addGuide {
+      background: var(--control-bg);
+      border-color: var(--border-strong);
+    }
+    #deleteSelected, #clearCanvas {
+      color: var(--danger);
+      border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+      background: color-mix(in srgb, var(--danger) 12%, var(--control-bg));
     }
     input, textarea {
       user-select: text;
       -webkit-user-select: text;
     }
+    .axisControl, .themeControl {
+      display: inline-grid;
+      grid-template-columns: auto minmax(96px, 1fr);
+      gap: 8px;
+      align-items: center;
+      color: var(--text-muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .axisControl input {
+      width: 96px;
+      background: var(--control-bg);
+    }
+    .themeControl select {
+      min-width: 124px;
+      background: var(--control-bg);
+    }
     main {
       display: grid;
-      grid-template-columns: minmax(720px, 1fr) 380px;
-      min-height: calc(100vh - 124px);
+      grid-template-columns: minmax(720px, 1fr) minmax(340px, 390px);
+      min-height: calc(100vh - var(--chrome-height));
     }
     #canvasWrap {
+      position: relative;
       overflow: hidden;
-      border-right: 1px solid #243244;
+      border-right: 1px solid var(--border);
       background:
-        radial-gradient(circle at 16px 16px, rgba(255,255,255,.035) 1px, transparent 1px) 0 0 / 24px 24px,
-        #0f172a;
+        linear-gradient(var(--canvas-grid) 1px, transparent 1px) 0 0 / 48px 48px,
+        linear-gradient(90deg, var(--canvas-grid) 1px, transparent 1px) 0 0 / 48px 48px,
+        radial-gradient(circle at 24px 24px, var(--canvas-dot) 1px, transparent 1px) 0 0 / 24px 24px,
+        var(--canvas-bg);
+    }
+    #canvasWrap::before {
+      content: "";
+      position: absolute;
+      inset: 16px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      pointer-events: none;
     }
     #canvas {
+      position: relative;
+      z-index: 1;
       width: 100%;
       height: auto;
       display: block;
@@ -105,26 +250,50 @@
     }
     #canvas:active { cursor: grabbing; }
     aside {
-      height: calc(100vh - 124px);
+      height: calc(100vh - var(--chrome-height));
       overflow: auto;
-      padding: 14px;
-      background: var(--panel);
+      padding: 16px;
+      background: var(--surface);
+    }
+    .panelHeader {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      align-items: center;
+      margin-bottom: 12px;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+    .panelHeader strong {
+      display: block;
+      color: var(--text);
+      font-size: 14px;
     }
     .card {
-      background: var(--panel2);
-      border: 1px solid #2b3b52;
-      border-radius: 12px;
-      padding: 12px;
       margin-bottom: 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 14px;
+      background: var(--surface-muted);
+      box-shadow: var(--shadow);
+    }
+    .card.compact {
+      box-shadow: none;
+      background: var(--surface);
     }
     .card h2, .card h3 {
-      margin: 0 0 8px;
+      margin: 0 0 9px;
+      color: var(--text);
+      letter-spacing: -.02em;
       font-size: 16px;
     }
     .card p, .card li {
-      color: #d1d5db;
-      line-height: 1.45;
+      color: var(--text-soft);
+      line-height: 1.5;
       font-size: 13px;
+    }
+    .card p {
+      margin: 0;
     }
     .card ul {
       padding-left: 18px;
@@ -132,22 +301,25 @@
     }
     .editor {
       display: grid;
-      gap: 8px;
+      gap: 10px;
       margin-top: 10px;
     }
-    .editor label {
+    .editor label,
+    .fieldLabel {
       display: grid;
-      gap: 4px;
-      color: var(--muted);
+      gap: 6px;
+      color: var(--text-muted);
       font-size: 12px;
+      font-weight: 650;
     }
     .editor input, .editor select, .editor textarea {
       width: 100%;
-      background: #0b1220;
+      background: var(--control-bg);
     }
     .editor textarea {
-      min-height: 86px;
+      min-height: 96px;
       resize: vertical;
+      line-height: 1.45;
     }
     .buttonRow {
       display: flex;
@@ -162,34 +334,36 @@
     .swatch {
       display: flex;
       align-items: center;
-      gap: 6px;
-      background: #0b1220;
-      border: 1px solid #334155;
-      border-radius: 8px;
+      gap: 8px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
       color: var(--text);
-      padding: 5px 7px;
+      background: var(--control-bg);
+      padding: 6px 8px;
       cursor: pointer;
       font-size: 12px;
     }
     .swatch:hover, .swatch.active {
-      border-color: #7dd3fc;
-      background: #1e3a5f;
+      border-color: var(--accent);
+      background: var(--accent-soft);
     }
     .swatchBox {
-      width: 16px;
-      height: 16px;
-      border-radius: 4px;
-      border: 1px solid rgba(255,255,255,.4);
+      width: 17px;
+      height: 17px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, .45);
       flex: none;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18);
     }
     .laneLabel {
-      fill: #dbeafe;
+      fill: #f8fafc;
       font-size: 13px;
-      font-weight: 700;
+      font-weight: 800;
+      letter-spacing: -.01em;
       cursor: pointer;
     }
-    .axisText, .cycleLabel {
-      fill: #cbd5e1;
+    .cycleLabel {
+      fill: var(--svg-muted);
       font-size: 12px;
     }
     .gridLine {
@@ -198,44 +372,46 @@
     }
     .laneBg {
       fill: rgba(30, 41, 59, .62);
-      stroke: #334155;
-      rx: 12;
-      ry: 12;
+      stroke: rgba(148, 163, 184, .22);
+      rx: 16;
+      ry: 16;
     }
     .item rect {
-      stroke: rgba(255,255,255,.3);
+      stroke: rgba(255, 255, 255, .36);
       stroke-width: 1.4;
-      rx: 9;
-      ry: 9;
-      filter: drop-shadow(0 4px 6px rgba(0,0,0,.25));
+      rx: 12;
+      ry: 12;
+      filter: drop-shadow(0 10px 14px rgba(0, 0, 0, .30));
     }
     .item circle.signalDot, .item line.signalStem {
-      stroke: rgba(255,255,255,.45);
+      stroke: rgba(255, 255, 255, .55);
       stroke-width: 1.4;
-      filter: drop-shadow(0 4px 6px rgba(0,0,0,.25));
+      filter: drop-shadow(0 10px 14px rgba(0, 0, 0, .30));
     }
     .item text {
       fill: var(--text);
       pointer-events: none;
       font-size: 12px;
-      font-weight: 700;
+      font-weight: 800;
+      letter-spacing: -.01em;
       user-select: none;
       -webkit-user-select: none;
     }
     .item .small {
-      fill: #cbd5e1;
+      fill: #d4deec;
       font-size: 10px;
-      font-weight: 500;
+      font-weight: 600;
     }
     .item.selected rect,
     .item.selected circle.signalDot,
     .laneSelected {
-      stroke: #f8fafc;
+      stroke: var(--accent);
       stroke-width: 3;
+      filter: drop-shadow(var(--selection-shadow));
     }
     .resizeHandle {
-      fill: rgba(255,255,255,.65);
-      stroke: rgba(15,23,42,.85);
+      fill: var(--text);
+      stroke: var(--background);
       stroke-width: 1;
       cursor: ew-resize;
       opacity: 0;
@@ -246,38 +422,60 @@
       opacity: 1;
     }
     .guideLine {
-      stroke-width: 2;
+      stroke-width: 2.2;
       stroke-dasharray: 8 7;
-      filter: drop-shadow(0 3px 4px rgba(0,0,0,.35));
+      filter: drop-shadow(0 8px 10px rgba(0, 0, 0, .38));
       cursor: ew-resize;
     }
     .guideLabelBg {
-      rx: 8;
-      ry: 8;
+      rx: 10;
+      ry: 10;
     }
     .guideLabel {
       font-size: 12px;
-      font-weight: 800;
+      font-weight: 850;
       cursor: ew-resize;
     }
     .pill {
       display: inline-flex;
       align-items: center;
-      border: 1px solid #3b4a61;
+      border: 1px solid rgba(148, 163, 184, .22);
       border-radius: 999px;
-      padding: 3px 8px;
+      padding: 4px 8px;
       margin: 0 4px 4px 0;
-      color: #dbeafe;
+      color: var(--text-soft);
       font-size: 12px;
-      background: #111b2e;
+      background: var(--accent-soft);
     }
     code {
-      color: #bfdbfe;
-      background: #0b1220;
-      padding: 1px 4px;
-      border-radius: 4px;
+      color: var(--text);
+      background: var(--accent-soft);
+      border: 1px solid rgba(var(--accent-rgb), .20);
+      padding: 1px 5px;
+      border-radius: 5px;
       user-select: text;
       -webkit-user-select: text;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+      }
+    }
+    @media (max-width: 1100px) {
+      header {
+        grid-template-columns: 1fr;
+        align-items: start;
+      }
+      .metaStrip {
+        justify-content: flex-start;
+        max-width: none;
+      }
+      :root {
+        --chrome-height: 230px;
+      }
     }
     @media (max-width: 980px) {
       main {
@@ -285,57 +483,115 @@
       }
       aside {
         height: auto;
-        border-top: 1px solid #243244;
+        border-top: 1px solid var(--border);
+      }
+    }
+    @media (max-width: 640px) {
+      header, .toolbar {
+        padding-left: 14px;
+        padding-right: 14px;
+      }
+      .toolGroup {
+        width: 100%;
+      }
+      .toolGroup button {
+        flex: 1 1 auto;
+      }
+      .axisControl, .themeControl {
+        grid-template-columns: 1fr;
+        width: 100%;
+      }
+      .axisControl input, .themeControl select {
+        width: 100%;
+      }
+      main {
+        min-height: auto;
       }
     }
   </style>
 </head>
 <body>
   <header>
-    <h1>Timeline Discussion Canvas</h1>
-    <div class="subtitle">
-      A blank, editable timeline canvas for CPFW / AM / silicon discussions. Add lanes, duration blocks, and instant signal markers.
-      The X axis is relative schematic time: use it to show ordering and approximate length, not measured cycles unless you explicitly decide to enter measured values. The Total time box sets the full timeline length; Zoom in/out changes the visible time window like a video editor timeline.
-      Work autosaves to this browser (localStorage) and is restored on reload. Press Ctrl+Z to undo, Ctrl+Y (or Ctrl+Shift+Z) to redo.
-      Version: 2026-06-29-0935.
+    <div class="titleBlock">
+      <p class="kicker">Worktable</p>
+      <h1>Timeline Discussion Canvas</h1>
+      <div class="subtitle">
+        A schematic timeline for CPFW / AM / silicon discussions. Keep ordering, duration, and guide marks in one canvas without turning rough discussion notes into fake precision.
+      </div>
+    </div>
+    <div class="metaStrip" aria-label="Canvas behavior">
+      <span class="statusChip">Local autosave</span>
+      <span class="statusChip">Relative time</span>
+      <span class="statusChip">Undo / redo</span>
+      <span class="statusChip">Dark / light</span>
     </div>
   </header>
 
-  <div class="toolbar">
-    <button id="addLane">Add lane</button>
-    <button id="addBlock">Add block</button>
-    <button id="addSignal">Add signal</button>
-    <button id="addGuide">Add guide</button>
-    <button id="deleteSelected">Delete selected</button>
-    <button id="undoBtn" title="Undo (Ctrl+Z)">Undo</button>
-    <button id="redoBtn" title="Redo (Ctrl+Y)">Redo</button>
-    <button id="clearCanvas">Clear canvas</button>
-    <button id="resetView">Reset view</button>
-    <button id="toggleTimeTicks" class="active">Hide time ticks</button>
-    <button id="exportJson">Export JSON</button>
-    <button id="importJson">Import JSON</button>
-    <input id="importFile" type="file" accept="application/json,.json" style="display:none" />
-    <button id="zoomInTime">Zoom in</button>
-    <button id="zoomOutTime">Zoom out</button>
-    <button id="fitTimeline">Fit timeline</button>
-    <input id="axisMax" type="number" min="10" step="10" placeholder="Total time" />
+  <div class="toolbar" aria-label="Timeline controls">
+    <div class="toolGroup" aria-label="Create objects">
+      <button id="addLane">Add lane</button>
+      <button id="addBlock">Add block</button>
+      <button id="addSignal">Add signal</button>
+      <button id="addGuide">Add guide</button>
+      <button id="deleteSelected">Delete selected</button>
+    </div>
+    <div class="toolGroup" aria-label="History and canvas">
+      <button id="undoBtn" title="Undo (Ctrl+Z)">Undo</button>
+      <button id="redoBtn" title="Redo (Ctrl+Y)">Redo</button>
+      <button id="clearCanvas">Clear canvas</button>
+    </div>
+    <div class="toolGroup" aria-label="View controls">
+      <button id="resetView">Reset view</button>
+      <button id="toggleTimeTicks">Show time ticks</button>
+      <button id="zoomInTime">Zoom in</button>
+      <button id="zoomOutTime">Zoom out</button>
+      <button id="fitTimeline">Fit timeline</button>
+      <label class="axisControl" for="axisMax"><span>Total time</span><input id="axisMax" type="number" min="10" step="10" placeholder="240" /></label>
+      <label class="themeControl" for="themeSelect">
+        <span>Theme</span>
+        <select id="themeSelect">
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+        </select>
+      </label>
+    </div>
+    <div class="toolGroup" aria-label="Import and export">
+      <button id="exportJson">Export JSON</button>
+      <button id="importJson">Import JSON</button>
+      <input id="importFile" type="file" accept="application/json,.json" style="display:none" />
+    </div>
   </div>
 
   <main>
     <section id="canvasWrap">
       <svg id="canvas" role="img" aria-label="Blank timeline discussion canvas"></svg>
     </section>
-    <aside>
+    <aside aria-label="Inspector and help">
+      <div class="panelHeader">
+        <div>
+          <strong>Inspector</strong>
+          Select a lane, block, signal, or guide.
+        </div>
+        <span class="pill">Local only</span>
+      </div>
       <div class="card" id="inspector">
         <h2>Blank canvas</h2>
         <p>Use <code>Add lane</code>, then <code>Add block</code> or <code>Add signal</code>. Click the canvas to place new items. Drag items along X to adjust their position on the relative-time axis.</p>
       </div>
-      <div class="card">
+      <div class="card compact">
         <h3>Object types</h3>
         <ul>
           <li><strong>Block</strong>: duration, with start and end.</li>
           <li><strong>Signal</strong>: instant event, shown as a diamond and vertical tick.</li>
           <li><strong>Lane</strong>: Y-axis category. Rename or reorder it from the inspector.</li>
+        </ul>
+      </div>
+      <div class="card compact">
+        <h3>Fast workflow</h3>
+        <ul>
+          <li>Pick an add mode, then click the canvas.</li>
+          <li>Drag the canvas to pan; use the wheel to zoom time around the pointer.</li>
+          <li>Export JSON when the discussion state should travel with the note.</li>
         </ul>
       </div>
     </aside>
@@ -346,6 +602,7 @@
     const inspector = document.getElementById("inspector");
     const importFile = document.getElementById("importFile");
     const axisMaxInput = document.getElementById("axisMax");
+    const themeSelect = document.getElementById("themeSelect");
     const ns = "http://www.w3.org/2000/svg";
 
     const model = {
@@ -368,7 +625,7 @@
       laneSeq: 2,
       itemSeq: 1,
       renderPending: false,
-      showTimeTicks: true
+      showTimeTicks: false
     };
 
     const layout = {
@@ -522,7 +779,6 @@
           g.appendChild(make("text", { class: "cycleLabel", x: xx - 10, y: 14 }, c));
         }
       }
-      g.appendChild(make("text", { class: "axisText", x: layout.left, y: 30 }, model.axis.label));
       root.appendChild(g);
     }
 
@@ -535,6 +791,13 @@
 
     function syncAxisInputs() {
       if (document.activeElement !== axisMaxInput) axisMaxInput.value = model.axis.max || 240;
+    }
+
+    function syncTimeTicksButton() {
+      const button = document.getElementById("toggleTimeTicks");
+      if (!button) return;
+      button.classList.toggle("active", state.showTimeTicks);
+      button.textContent = state.showTimeTicks ? "Hide time ticks" : "Show time ticks";
     }
 
     function drawLanes(root) {
@@ -784,7 +1047,7 @@
         <h2>Lane</h2>
         <div class="editor">
           <label>Label <input id="laneLabel" value="${escapeHtml(lane.label)}" /></label>
-          <label>Background color ${renderSwatches(lane.color || "#1e293b", "lane")}</label>
+          <div class="fieldLabel">Background color ${renderSwatches(lane.color || "#1e293b", "lane")}</div>
           <label>Background opacity <input id="laneOpacity" type="range" min="0" max="1" step="0.05" value="${lane.opacity ?? 0.62}" /></label>
           <div class="buttonRow">
             <button id="laneUp">Move up</button>
@@ -836,8 +1099,8 @@
         <div class="editor">
           <label>Label <input id="itemLabel" value="${escapeHtml(item.label)}" /></label>
           ${isGuide ? "" : `<label>Lane <select id="itemLane">${lanes}</select></label>`}
-          ${isGuide ? `<label>Line color ${renderSwatches(item.lineColor || "#f8fafc", "guide-line")}</label>
-          <label>Label box color ${renderSwatches(item.labelBoxColor || "#0f172a", "guide-box")}</label>` : `<label>Type / color
+          ${isGuide ? `<div class="fieldLabel">Line color ${renderSwatches(item.lineColor || "#f8fafc", "guide-line")}</div>
+          <div class="fieldLabel">Label box color ${renderSwatches(item.labelBoxColor || "#0f172a", "guide-box")}</div>` : `<label>Type / color
             <select id="itemType">
               ${["custom", "parse", "fence", "descriptor", "dispatch", "eop", "barrier", "signal"].map(t => `<option value="${t}" ${item.type === t ? "selected" : ""}>${t}</option>`).join("")}
             </select>
@@ -992,6 +1255,7 @@
         items: model.items,
         view: model.view,
         showTimeTicks: state.showTimeTicks,
+        uiDefaultsVersion: UI_DEFAULTS_VERSION,
         exportedAt: new Date().toISOString()
       };
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
@@ -1024,9 +1288,8 @@
       }
       const laneIds = new Set(model.lanes.map(lane => lane.id));
       model.items = (payload.items || []).filter(item => laneIds.has(item.laneId));
-      state.showTimeTicks = payload.showTimeTicks !== false;
-      document.getElementById("toggleTimeTicks").classList.toggle("active", state.showTimeTicks);
-      document.getElementById("toggleTimeTicks").textContent = state.showTimeTicks ? "Hide time ticks" : "Show time ticks";
+      state.showTimeTicks = payload.uiDefaultsVersion >= UI_DEFAULTS_VERSION && payload.showTimeTicks === true;
+      syncTimeTicksButton();
       state.selected = null;
       showEmptyInspector();
     }
@@ -1040,8 +1303,30 @@
       render();
     }
 
-    const STORAGE_KEY = "timeline_discussion_canvas_autosave_v1";
+    const STORAGE_KEY = "timeline_discussion_canvas_autosave_v1_design_v3_20260630";
+    const LEGACY_STORAGE_KEY = "timeline_discussion_canvas_autosave_v1";
+    const THEME_STORAGE_KEY = "timeline_discussion_canvas_theme_v3_20260630";
+    const UI_DEFAULTS_VERSION = 2;
+    const THEMES = new Set(["dark", "light"]);
     let saveTimer = null;
+
+    function applyTheme(theme, persist = true) {
+      const nextTheme = THEMES.has(theme) ? theme : "dark";
+      document.documentElement.dataset.theme = nextTheme;
+      if (themeSelect && themeSelect.value !== nextTheme) themeSelect.value = nextTheme;
+      if (!persist) return;
+      try {
+        localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+      } catch (_) {}
+    }
+
+    function loadTheme() {
+      try {
+        applyTheme(localStorage.getItem(THEME_STORAGE_KEY) || "dark", false);
+      } catch (_) {
+        applyTheme("dark", false);
+      }
+    }
 
     function saveLocal() {
       if (saveTimer) clearTimeout(saveTimer);
@@ -1054,6 +1339,7 @@
             items: model.items,
             view: model.view,
             showTimeTicks: state.showTimeTicks,
+            uiDefaultsVersion: UI_DEFAULTS_VERSION,
             savedAt: new Date().toISOString()
           }));
         } catch (_) {}
@@ -1062,7 +1348,7 @@
 
     function loadLocal() {
       try {
-        const raw = localStorage.getItem(STORAGE_KEY);
+        const raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
         if (!raw) return false;
         const data = JSON.parse(raw);
         if (!data || !Array.isArray(data.lanes) || !Array.isArray(data.items)) return false;
@@ -1142,12 +1428,14 @@
     });
     document.getElementById("toggleTimeTicks").addEventListener("click", () => {
       state.showTimeTicks = !state.showTimeTicks;
-      document.getElementById("toggleTimeTicks").classList.toggle("active", state.showTimeTicks);
-      document.getElementById("toggleTimeTicks").textContent = state.showTimeTicks ? "Hide time ticks" : "Show time ticks";
+      syncTimeTicksButton();
       render();
     });
     document.getElementById("exportJson").addEventListener("click", exportJson);
     document.getElementById("importJson").addEventListener("click", () => importFile.click());
+    themeSelect.addEventListener("change", ev => {
+      applyTheme(ev.target.value);
+    });
     axisMaxInput.addEventListener("change", () => {
       commitHistory();
       const nextMax = Math.max(10, Number(axisMaxInput.value) || 240);
@@ -1315,6 +1603,7 @@
       else undo();
     });
 
+    loadTheme();
     loadLocal();
     history.undo.length = 0;
     history.redo.length = 0;
