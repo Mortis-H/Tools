@@ -2028,13 +2028,30 @@
         localStorage.setItem("userName", userName);
       }
 
-      // Initialize Native WebSocket
-      // Connects to the Cloudflare Worker deployed via Wrangler
-      const socket = new WebSocket(`wss://timeline-backend.mortis-huang.workers.dev/room/${room}`);
-
+      const wsUrl = `wss://timeline-backend.mortis-huang.workers.dev/room/${room}`;
+      const PRESENCE_REFRESH_MS = 15000;
+      const PRESENCE_STALE_MS = 45000;
+      const HEARTBEAT_MS = 25000;
+      let socket = null;
+      let reconnectTimer = null;
+      let presenceRefreshTimer = null;
+      let heartbeatTimer = null;
+      let reconnectAttempt = 0;
+      let lastPresenceAt = 0;
       let currentDriverId = null;
       let isDriver = false;
       const metaStrip = document.querySelector(".metaStrip");
+
+      function sendMessage(message) {
+        if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+        socket.send(JSON.stringify(message));
+        return true;
+      }
+
+      function updatePresenceStatus(message) {
+        if (!metaStrip) return;
+        metaStrip.innerHTML = `<span class="statusChip">${escapeHtml(message)}</span>`;
+      }
 
       function updatePresenceUI(users) {
         const me = users.find(u => u.id === clientId);
@@ -2057,10 +2074,10 @@
         metaStrip.innerHTML = chips + " " + actionBtn;
 
         if (document.getElementById("yieldControlBtn")) {
-          document.getElementById("yieldControlBtn").onclick = () => socket.send(JSON.stringify({ type: 'yield_control' }));
+          document.getElementById("yieldControlBtn").onclick = () => sendMessage({ type: 'yield_control' });
         }
         if (document.getElementById("takeControlBtn")) {
-          document.getElementById("takeControlBtn").onclick = () => socket.send(JSON.stringify({ type: 'request_control' }));
+          document.getElementById("takeControlBtn").onclick = () => sendMessage({ type: 'request_control' });
         }
 
         // Lock editing for observers, but keep read-only actions such as export and focus available.
@@ -2068,29 +2085,104 @@
         applyEditingLock();
       }
 
-      socket.addEventListener("open", () => {
-        socket.send(JSON.stringify({ type: 'join', name: userName, clientId: clientId }));
-      });
-
-      socket.addEventListener("message", (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === 'presence_update') {
-          currentDriverId = data.currentDriverId;
-          updatePresenceUI(data.users);
-        } else if (data.type === 'state_update') {
-          if (!isDriver) {
-             hydrate(data.model);
-             render();
+      function startPresenceTimers() {
+        stopPresenceTimers();
+        presenceRefreshTimer = window.setInterval(() => {
+          if (!socket || socket.readyState !== WebSocket.OPEN) {
+            scheduleReconnect();
+            return;
           }
+          sendMessage({ type: 'presence_request', clientId });
+          if (lastPresenceAt && Date.now() - lastPresenceAt > PRESENCE_STALE_MS) {
+            reconnectSocket();
+          }
+        }, PRESENCE_REFRESH_MS);
+        heartbeatTimer = window.setInterval(() => {
+          sendMessage({ type: 'ping', clientId, ts: Date.now() });
+        }, HEARTBEAT_MS);
+      }
+
+      function stopPresenceTimers() {
+        if (presenceRefreshTimer) window.clearInterval(presenceRefreshTimer);
+        if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+        presenceRefreshTimer = null;
+        heartbeatTimer = null;
+      }
+
+      function scheduleReconnect() {
+        if (reconnectTimer) return;
+        const delay = Math.min(12000, 1000 * 2 ** reconnectAttempt);
+        reconnectAttempt += 1;
+        updatePresenceStatus("Reconnecting...");
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null;
+          connectSocket();
+        }, delay);
+      }
+
+      function reconnectSocket() {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.close(4000, "presence refresh");
+          return;
         }
+        scheduleReconnect();
+      }
+
+      function connectSocket() {
+        if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
+        updatePresenceStatus("Connecting...");
+        socket = new WebSocket(wsUrl);
+
+        socket.addEventListener("open", () => {
+          reconnectAttempt = 0;
+          lastPresenceAt = Date.now();
+          sendMessage({ type: 'join', name: userName, clientId: clientId });
+          sendMessage({ type: 'presence_request', clientId: clientId });
+          startPresenceTimers();
+        });
+
+        socket.addEventListener("message", (event) => {
+          const data = JSON.parse(event.data);
+          if (data.type === 'presence_update') {
+            lastPresenceAt = Date.now();
+            currentDriverId = data.currentDriverId;
+            updatePresenceUI(data.users);
+          } else if (data.type === 'state_update') {
+            if (!isDriver) {
+               hydrate(data.model);
+               render();
+            }
+          }
+        });
+
+        socket.addEventListener("close", () => {
+          stopPresenceTimers();
+          socket = null;
+          scheduleReconnect();
+        });
+
+        socket.addEventListener("error", () => {
+          if (socket) socket.close();
+        });
+      }
+
+      connectSocket();
+
+      window.addEventListener("visibilitychange", () => {
+        if (document.visibilityState !== "visible") return;
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+          scheduleReconnect();
+          return;
+        }
+        sendMessage({ type: 'presence_request', clientId: clientId });
       });
 
       // Hook into saveLocal
       const originalSaveLocal = saveLocal;
       window.saveLocal = function() {
         originalSaveLocal();
-        if (isDriver && socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({
+        if (isDriver && socket && socket.readyState === WebSocket.OPEN) {
+          sendMessage({
             type: 'state_update',
             model: {
               schema: model.schema,
@@ -2101,7 +2193,7 @@
               showTimeTicks: state.showTimeTicks,
               uiDefaultsVersion: UI_DEFAULTS_VERSION
             }
-          }));
+          });
         }
       };
       
