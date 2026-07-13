@@ -2317,9 +2317,22 @@
         let cursorGroup = document.getElementById(`cursor-${data.clientId}`);
         if (!cursorGroup) {
           cursorGroup = make("g", { id: `cursor-${data.clientId}` });
-          const pointer = make("polygon", { points: "0,0 16,16 9,16 0,24", fill: "#ff0066", stroke: "white", "stroke-width": 1.5 });
-          const labelGroup = make("g", { transform: "translate(15, 20)" });
-          const labelBg = make("rect", { fill: "#ff0066", rx: 4, height: 20 });
+          
+          // Generate a color based on the client's name or ID so everyone is unique
+          const hue = Array.from(data.name || data.clientId).reduce((acc, char) => acc + char.charCodeAt(0), 0) % 360;
+          const userColor = `hsl(${hue}, 80%, 55%)`;
+
+          const pointer = make("polygon", { 
+            points: "0,0 0,24 6,18 18,18", 
+            fill: userColor, 
+            stroke: "white", 
+            "stroke-width": 2,
+            "stroke-linejoin": "round"
+          });
+          pointer.style.filter = "drop-shadow(2px 3px 3px rgba(0,0,0,0.3))";
+          
+          const labelGroup = make("g", { transform: "translate(15, 24)" });
+          const labelBg = make("rect", { fill: userColor, rx: 4, height: 20 });
           const labelText = make("text", { fill: "white", "font-size": 12, y: 14, x: 6 }, data.name);
           labelGroup.appendChild(labelBg);
           labelGroup.appendChild(labelText);
