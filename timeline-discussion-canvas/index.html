@@ -912,18 +912,29 @@
       render();
     }
 
+    const canvasRoot = make("g", { id: "canvasRoot" });
+    const contentRoot = make("g", { id: "contentRoot" });
+    const laserLayer = make("g", { id: "laserLayer" });
+    const cursorsLayer = make("g", { id: "cursorsLayer" });
+    canvasRoot.appendChild(contentRoot);
+    canvasRoot.appendChild(laserLayer);
+    canvasRoot.appendChild(cursorsLayer);
+
     function render() {
       state.renderPending = false;
-      svg.innerHTML = "";
+      if (!canvasRoot.parentNode) {
+        svg.innerHTML = "";
+        svg.appendChild(canvasRoot);
+      }
       updateSvgSize();
       syncAxisInputs();
-      const root = make("g", { transform: `translate(${model.view.tx} ${model.view.ty}) scale(${model.view.scale})` });
-      svg.appendChild(root);
-      drawAxis(root);
-      drawLanes(root);
-      drawItems(root);
-      drawPlacementPreview(root);
-      drawSnapGuide(root);
+      canvasRoot.setAttribute("transform", `translate(${model.view.tx} ${model.view.ty}) scale(${model.view.scale})`);
+      contentRoot.innerHTML = "";
+      drawAxis(contentRoot);
+      drawLanes(contentRoot);
+      drawItems(contentRoot);
+      drawPlacementPreview(contentRoot);
+      drawSnapGuide(contentRoot);
       saveLocal();
     }
 
@@ -2158,6 +2169,7 @@
       let currentDriverId = null;
       let isDriver = false;
       const metaStrip = document.querySelector(".metaStrip");
+      const cursorPositions = {}; // clientId -> {x, y}
 
       function sendMessage(message) {
         if (!socket || socket.readyState !== WebSocket.OPEN) return false;
@@ -2200,6 +2212,18 @@
         // Lock editing for observers, but keep read-only actions such as export and focus available.
         state.editingLocked = !isDriver;
         applyEditingLock();
+
+        // Cleanup cursors of disconnected users
+        const activeIds = new Set(users.map(u => u.id));
+        for (const id in cursorPositions) {
+          if (!activeIds.has(id)) {
+            const cursorNode = document.getElementById(`cursor-${id}`);
+            if (cursorNode && cursorNode.parentNode) {
+              cursorNode.parentNode.removeChild(cursorNode);
+            }
+            delete cursorPositions[id];
+          }
+        }
       }
 
       function startPresenceTimers() {
@@ -2269,6 +2293,8 @@
                hydrate(data.model);
                render();
             }
+          } else if (data.type === 'cursor') {
+            handleCursor(data);
           }
         });
 
@@ -2282,6 +2308,60 @@
           if (socket) socket.close();
         });
       }
+
+      function handleCursor(data) {
+        const cursorsLayer = document.getElementById("cursorsLayer");
+        const laserLayer = document.getElementById("laserLayer");
+        if (!cursorsLayer || !laserLayer) return;
+
+        let cursorGroup = document.getElementById(`cursor-${data.clientId}`);
+        if (!cursorGroup) {
+          cursorGroup = make("g", { id: `cursor-${data.clientId}` });
+          const pointer = make("polygon", { points: "0,0 12,20 8,20 12,30 8,32 4,22 -4,22", fill: "#ff0066", stroke: "white", "stroke-width": 1.5 });
+          const labelGroup = make("g", { transform: "translate(15, 20)" });
+          const labelBg = make("rect", { fill: "#ff0066", rx: 4, height: 20 });
+          const labelText = make("text", { fill: "white", "font-size": 12, y: 14, x: 6 }, data.name);
+          labelGroup.appendChild(labelBg);
+          labelGroup.appendChild(labelText);
+          
+          cursorGroup.appendChild(pointer);
+          cursorGroup.appendChild(labelGroup);
+          cursorGroup.style.transition = "transform 0.05s linear";
+          
+          setTimeout(() => {
+            if (document.body.contains(labelText)) {
+              const bbox = labelText.getBBox();
+              labelBg.setAttribute("width", bbox.width + 12);
+            }
+          }, 0);
+          
+          cursorsLayer.appendChild(cursorGroup);
+        }
+        
+        cursorGroup.setAttribute("transform", `translate(${data.x}, ${data.y})`);
+        
+        const prev = cursorPositions[data.clientId];
+        if (data.isLaser && prev) {
+           const line = make("line", { x1: prev.x, y1: prev.y, x2: data.x, y2: data.y, stroke: "#ff0066", "stroke-width": 4, "stroke-linecap": "round" });
+           line.style.transition = "opacity 1s ease-out";
+           laserLayer.appendChild(line);
+           line.getBoundingClientRect(); // force reflow
+           line.style.opacity = 0;
+           setTimeout(() => { if (line.parentNode) line.parentNode.removeChild(line); }, 1000);
+        }
+        cursorPositions[data.clientId] = { x: data.x, y: data.y };
+      }
+
+      let lastCursorSend = 0;
+      svg.addEventListener("pointermove", ev => {
+        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        const now = Date.now();
+        if (now - lastCursorSend < 50) return;
+        lastCursorSend = now;
+        
+        const pt = viewPointFromClient(ev);
+        sendMessage({ type: 'cursor', clientId: clientId, name: userName, x: pt.x, y: pt.y, isLaser: ev.shiftKey });
+      });
 
       connectSocket();
 
