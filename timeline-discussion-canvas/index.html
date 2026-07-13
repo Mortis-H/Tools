@@ -2326,7 +2326,6 @@
           
           cursorGroup.appendChild(pointer);
           cursorGroup.appendChild(labelGroup);
-          cursorGroup.style.transition = "transform 0.05s linear";
           
           setTimeout(() => {
             if (document.body.contains(labelText)) {
@@ -2338,9 +2337,15 @@
           cursorsLayer.appendChild(cursorGroup);
         }
         
+        cursorGroup.style.transition = "transform 0.05s linear, opacity 0.2s ease-in";
+        cursorGroup.style.opacity = "1";
         cursorGroup.setAttribute("transform", `translate(${data.x}, ${data.y})`);
         
         const prev = cursorPositions[data.clientId];
+        if (prev && prev.timeoutId) {
+          clearTimeout(prev.timeoutId);
+        }
+
         if (data.isLaser && prev) {
            const line = make("line", { x1: prev.x, y1: prev.y, x2: data.x, y2: data.y, stroke: "#ff0066", "stroke-width": 4, "stroke-linecap": "round" });
            line.style.transition = "opacity 1s ease-out";
@@ -2349,7 +2354,21 @@
            line.style.opacity = 0;
            setTimeout(() => { if (line.parentNode) line.parentNode.removeChild(line); }, 1000);
         }
-        cursorPositions[data.clientId] = { x: data.x, y: data.y };
+
+        const timeoutId = setTimeout(() => {
+          const node = document.getElementById(`cursor-${data.clientId}`);
+          if (node) {
+            node.style.opacity = "0";
+            setTimeout(() => {
+              if (node.parentNode) node.parentNode.removeChild(node);
+              if (cursorPositions[data.clientId]?.timeoutId === timeoutId) {
+                delete cursorPositions[data.clientId];
+              }
+            }, 300);
+          }
+        }, 3000);
+
+        cursorPositions[data.clientId] = { x: data.x, y: data.y, timeoutId: timeoutId };
       }
 
       let lastCursorSend = 0;
