@@ -2317,7 +2317,7 @@
         let cursorGroup = document.getElementById(`cursor-${data.clientId}`);
         if (!cursorGroup) {
           cursorGroup = make("g", { id: `cursor-${data.clientId}` });
-          const pointer = make("polygon", { points: "0,0 12,20 8,20 12,30 8,32 4,22 -4,22", fill: "#ff0066", stroke: "white", "stroke-width": 1.5 });
+          const pointer = make("polygon", { points: "0,0 16,16 9,16 0,24", fill: "#ff0066", stroke: "white", "stroke-width": 1.5 });
           const labelGroup = make("g", { transform: "translate(15, 20)" });
           const labelBg = make("rect", { fill: "#ff0066", rx: 4, height: 20 });
           const labelText = make("text", { fill: "white", "font-size": 12, y: 14, x: 6 }, data.name);
@@ -2353,14 +2353,30 @@
       }
 
       let lastCursorSend = 0;
+      let myLastPos = null;
       svg.addEventListener("pointermove", ev => {
         if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        const pt = viewPointFromClient(ev);
+        const isLaser = ev.shiftKey;
+
+        if (isLaser && myLastPos) {
+           const laserLayer = document.getElementById("laserLayer");
+           if (laserLayer) {
+             const line = make("line", { x1: myLastPos.x, y1: myLastPos.y, x2: pt.x, y2: pt.y, stroke: "#ff0066", "stroke-width": 4, "stroke-linecap": "round" });
+             line.style.transition = "opacity 1s ease-out";
+             laserLayer.appendChild(line);
+             line.getBoundingClientRect(); // force reflow
+             line.style.opacity = 0;
+             setTimeout(() => { if (line.parentNode) line.parentNode.removeChild(line); }, 1000);
+           }
+        }
+        myLastPos = isLaser ? pt : null;
+
         const now = Date.now();
         if (now - lastCursorSend < 50) return;
         lastCursorSend = now;
         
-        const pt = viewPointFromClient(ev);
-        sendMessage({ type: 'cursor', clientId: clientId, name: userName, x: pt.x, y: pt.y, isLaser: ev.shiftKey });
+        sendMessage({ type: 'cursor', clientId: clientId, name: userName, x: pt.x, y: pt.y, isLaser: isLaser });
       });
 
       connectSocket();
