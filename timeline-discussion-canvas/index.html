@@ -1605,10 +1605,324 @@
 
     loadTheme();
     loadLocal();
+    document.getElementById("undoBtn").addEventListener("click", undo);
+    document.getElementById("redoBtn").addEventListener("click", redo);
+    document.getElementById("clearCanvas").addEventListener("click", clearCanvas);
+    document.getElementById("resetView").addEventListener("click", () => {
+      model.view.scale = 1;
+      model.view.tx = 0;
+      model.view.ty = 0;
+      setTimeViewport(0, model.axis.max);
+      render();
+    });
+    document.getElementById("zoomInTime").addEventListener("click", () => zoomTime(0.5));
+    document.getElementById("zoomOutTime").addEventListener("click", () => zoomTime(2));
+    document.getElementById("fitTimeline").addEventListener("click", () => {
+      setTimeViewport(0, model.axis.max);
+      render();
+    });
+    document.getElementById("toggleTimeTicks").addEventListener("click", () => {
+      state.showTimeTicks = !state.showTimeTicks;
+      syncTimeTicksButton();
+      render();
+    });
+    document.getElementById("exportJson").addEventListener("click", exportJson);
+    document.getElementById("importJson").addEventListener("click", () => importFile.click());
+    themeSelect.addEventListener("change", ev => {
+      applyTheme(ev.target.value);
+    });
+    axisMaxInput.addEventListener("change", () => {
+      commitHistory();
+      const nextMax = Math.max(10, Number(axisMaxInput.value) || 240);
+      model.axis.max = nextMax;
+      setTimeViewport(viewStart(), Math.min(viewSpan(), nextMax));
+      for (const item of model.items) {
+        if (item.kind === "signal" || item.kind === "guide") {
+          item.cycle = Math.min(item.cycle, nextMax);
+        } else {
+          item.start = Math.min(item.start, Math.max(0, nextMax - 1));
+          item.end = Math.min(item.end, nextMax);
+          if (item.end <= item.start) item.end = Math.min(nextMax, item.start + 1);
+        }
+      }
+      render();
+    });
+    importFile.addEventListener("change", async ev => {
+      const file = ev.target.files && ev.target.files[0];
+      if (!file) return;
+      try {
+        importJson(JSON.parse(await file.text()));
+      } catch (err) {
+        alert(err.message || String(err));
+      } finally {
+        ev.target.value = "";
+      }
+    });
+
+    function setAddMode(kind) {
+      state.addMode = state.addMode === kind ? null : kind;
+      document.getElementById("addBlock").classList.toggle("active", state.addMode === "block");
+      document.getElementById("addSignal").classList.toggle("active", state.addMode === "signal");
+      document.getElementById("addGuide").classList.toggle("active", state.addMode === "guide");
+    }
+
+    function itemFromEventTarget(target) {
+      const el = target && target.closest ? target.closest(".item") : null;
+      if (!el || !el.dataset) return null;
+      return getItem(el.dataset.id);
+    }
+
+    svg.addEventListener("pointerdown", ev => {
+      ev.preventDefault();
+      if (state.resizingItem) return;
+      const item = itemFromEventTarget(ev.target);
+      if (item) {
+        startItemDrag(item, ev);
+        return;
+      }
+      if (state.addMode) {
+        addItemAt(ev, state.addMode);
+        return;
+      }
+      state.draggingCanvas = true;
+      state.lastPointer = { x: ev.clientX, y: ev.clientY };
+      svg.setPointerCapture(ev.pointerId);
+    });
+
+    svg.addEventListener("mousedown", ev => {
+      const item = itemFromEventTarget(ev.target);
+      if (!item) return;
+      startItemDrag(item, ev);
+    });
+
+    svg.addEventListener("pointermove", ev => {
+      if (state.resizingItem) {
+        ev.preventDefault();
+        resizeSelectedItem(ev);
+        return;
+      }
+      if (state.draggingItem) {
+        ev.preventDefault();
+        dragSelectedItem(ev);
+        return;
+      }
+      if (!state.draggingCanvas || !state.lastPointer) return;
+      model.view.tx += ev.clientX - state.lastPointer.x;
+      model.view.ty += ev.clientY - state.lastPointer.y;
+      state.lastPointer = { x: ev.clientX, y: ev.clientY };
+      render();
+    });
+
+    svg.addEventListener("pointerup", () => {
+      state.draggingCanvas = false;
+      state.lastPointer = null;
+      state.draggingItem = null;
+      state.resizingItem = null;
+    });
+
+    window.addEventListener("mousemove", ev => {
+      if (state.resizingItem) {
+        ev.preventDefault();
+        resizeSelectedItem(ev);
+        return;
+      }
+      if (!state.draggingItem) return;
+      ev.preventDefault();
+      dragSelectedItem(ev);
+    }, { passive: false });
+
+    window.addEventListener("mouseup", () => {
+      state.draggingItem = null;
+      state.resizingItem = null;
+      state.draggingCanvas = false;
+      state.lastPointer = null;
+    });
+
+    function cycleDeltaFromPointer(ev, startClientX) {
+      const rect = svg.getBoundingClientRect();
+      const viewDx = (ev.clientX - startClientX) / Math.max(1, rect.width) * layout.viewWidth / Math.max(.001, model.view.scale);
+      return (viewDx / axisWidth()) * viewSpan();
+    }
+
+    function resizeSelectedItem(ev) {
+      if (!state.resizingItem) return;
+      const item = getItem(state.resizingItem.id);
+      if (!item || item.kind === "signal") return;
+      const delta = cycleDeltaFromPointer(ev, state.resizingItem.startClientX);
+      if (state.resizingItem.side === "left") {
+        const nextStart = clampCycle(state.resizingItem.originalStart + delta);
+        item.start = Math.min(nextStart, item.end - 1);
+      } else {
+        const nextEnd = clampCycle(state.resizingItem.originalEnd + delta);
+        item.end = Math.max(nextEnd, item.start + 1);
+      }
+      if (state.selected && state.selected.type === "item" && state.selected.id === item.id) showItemInspector(item);
+      render();
+    }
+
+    function dragSelectedItem(ev) {
+      if (!state.draggingItem) return;
+      const item = getItem(state.draggingItem.id);
+      if (!item) return;
+      const delta = cycleDeltaFromPointer(ev, state.draggingItem.startClientX);
+      if (Math.abs(ev.clientX - state.draggingItem.startClientX) > 2) state.draggingItem.moved = true;
+      if (item.kind === "signal" || item.kind === "guide") {
+        item.cycle = clampCycle(state.draggingItem.original.cycle + delta);
+      } else {
+        const duration = item.end - item.start;
+        item.start = clampCycle(state.draggingItem.original.start + delta);
+        item.end = Math.min(model.axis.max, Math.round((item.start + duration) * 10) / 10);
+      }
+      if (state.selected && state.selected.type === "item" && state.selected.id === item.id) showItemInspector(item);
+      render();
+    }
+
+    svg.addEventListener("wheel", ev => {
+      ev.preventDefault();
+      const point = viewPointFromClient(ev);
+      const anchorCycle = cycleFromViewX(point.x);
+      const factor = ev.deltaY < 0 ? 0.85 : 1.18;
+      zoomTime(factor, anchorCycle);
+    }, { passive: false });
+
+    inspector.addEventListener("focusin", commitHistory);
+
+    window.addEventListener("keydown", ev => {
+      if (!(ev.ctrlKey || ev.metaKey)) return;
+      const key = ev.key.toLowerCase();
+      if (key !== "z" && key !== "y") return;
+      const ae = document.activeElement;
+      if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
+      ev.preventDefault();
+      if (key === "y" || (key === "z" && ev.shiftKey)) redo();
+      else undo();
+    });
+
+    loadTheme();
+    loadLocal();
     history.undo.length = 0;
     history.redo.length = 0;
     updateHistoryButtons();
     render();
+
+    // --- Multiplayer Logic (Cloudflare Durable Objects) ---
+    (function initMultiplayer() {
+      const clientId = Math.random().toString(36).substring(2, 10);
+
+      // URL / Room Routing
+      const params = new URLSearchParams(window.location.search);
+      let room = params.get("room");
+      if (!room) {
+        room = "room-" + Math.random().toString(36).substring(2, 8);
+        const url = new URL(window.location.href);
+        url.searchParams.set("room", room);
+        window.history.replaceState({}, "", url.toString());
+      }
+
+      // Presence
+      let userName = localStorage.getItem("userName");
+      if (!userName) {
+        userName = prompt("Please enter your display name:") || "Anonymous";
+        localStorage.setItem("userName", userName);
+      }
+
+      // Initialize Native WebSocket
+      // Connects to the Cloudflare Worker deployed via Wrangler
+      const socket = new WebSocket(`wss://timeline-backend.mortis-huang.workers.dev/room/${room}`);
+
+      let currentDriverId = null;
+      let isDriver = false;
+      const metaStrip = document.querySelector(".metaStrip");
+      const toolbar = document.querySelector(".toolbar");
+      const canvasWrap = document.getElementById("canvasWrap");
+
+      function updatePresenceUI(users) {
+        const me = users.find(u => u.id === clientId);
+        isDriver = me?.isDriver || false;
+        
+        const chips = users.map(u => {
+          const dot = u.isDriver ? "🟢" : "⚪";
+          const label = `${dot} ${u.name}${u.isDriver ? ' (Driver)' : ''}`;
+          return `<span class="statusChip">${escapeHtml(label)}</span>`;
+        }).join(" ");
+        
+        // Append Action Button
+        let actionBtn = "";
+        if (isDriver) {
+          actionBtn = `<button id="yieldControlBtn" class="statusChip" style="cursor:pointer;background:var(--accent-soft);color:var(--text);border-color:var(--accent)">[ Yield Control ]</button>`;
+        } else {
+          actionBtn = `<button id="takeControlBtn" class="statusChip" style="cursor:pointer;background:var(--control-bg);color:var(--text)">[ Take Control ]</button>`;
+        }
+
+        metaStrip.innerHTML = chips + " " + actionBtn;
+
+        if (document.getElementById("yieldControlBtn")) {
+          document.getElementById("yieldControlBtn").onclick = () => socket.send(JSON.stringify({ type: 'yield_control' }));
+        }
+        if (document.getElementById("takeControlBtn")) {
+          document.getElementById("takeControlBtn").onclick = () => socket.send(JSON.stringify({ type: 'request_control' }));
+        }
+
+        // Lock / Unlock UI
+        if (isDriver) {
+          toolbar.style.opacity = "1";
+          toolbar.style.pointerEvents = "auto";
+          canvasWrap.style.pointerEvents = "auto";
+          document.querySelectorAll("aside button, aside input, aside select, aside textarea").forEach(el => el.disabled = false);
+        } else {
+          toolbar.style.opacity = "0.6";
+          toolbar.style.pointerEvents = "none";
+          canvasWrap.style.pointerEvents = "none";
+          document.querySelectorAll("aside button, aside input, aside select, aside textarea").forEach(el => el.disabled = true);
+        }
+      }
+
+      socket.addEventListener("open", () => {
+        socket.send(JSON.stringify({ type: 'join', name: userName, clientId: clientId }));
+      });
+
+      socket.addEventListener("message", (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === 'presence_update') {
+          currentDriverId = data.currentDriverId;
+          updatePresenceUI(data.users);
+        } else if (data.type === 'state_update') {
+          if (!isDriver) {
+             hydrate(data.model);
+             render();
+          }
+        }
+      });
+
+      // Hook into saveLocal
+      const originalSaveLocal = saveLocal;
+      window.saveLocal = function() {
+        originalSaveLocal();
+        if (isDriver && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({
+            type: 'state_update',
+            model: {
+              schema: model.schema,
+              axis: model.axis,
+              lanes: model.lanes,
+              items: model.items,
+              view: model.view,
+              showTimeTicks: state.showTimeTicks,
+              uiDefaultsVersion: UI_DEFAULTS_VERSION
+            }
+          }));
+        }
+      };
+      
+      saveLocal = window.saveLocal;
+      
+      window.addEventListener('beforeunload', (event) => {
+        if (isDriver) {
+          event.preventDefault();
+          event.returnValue = "You are the driver. Ensure you have exported JSON if you need to keep the canvas.";
+        }
+      });
+    })();
   </script>
 </body>
 </html>
