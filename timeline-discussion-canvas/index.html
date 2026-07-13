@@ -188,7 +188,7 @@
       background: var(--control-bg);
       border-color: var(--border-strong);
     }
-    #deleteSelected, #clearCanvas {
+    #deleteSelected, #resetCanvas {
       color: var(--danger);
       border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
       background: color-mix(in srgb, var(--danger) 12%, var(--control-bg));
@@ -538,7 +538,7 @@
     <div class="toolGroup" aria-label="History and canvas">
       <button id="undoBtn" title="Undo (Ctrl+Z)">Undo</button>
       <button id="redoBtn" title="Redo (Ctrl+Y)">Redo</button>
-      <button id="clearCanvas">Clear canvas</button>
+      <button id="resetCanvas">Reset canvas</button>
     </div>
     <div class="toolGroup" aria-label="View controls">
       <button id="resetView">Reset view</button>
@@ -605,14 +605,18 @@
     const themeSelect = document.getElementById("themeSelect");
     const ns = "http://www.w3.org/2000/svg";
 
+    const DEFAULT_AXIS = Object.freeze({ label: "Relative time (schematic)", max: 240 });
+    const DEFAULT_VIEW = Object.freeze({ scale: 1, tx: 0, ty: 0, timeStart: 0, timeSpan: DEFAULT_AXIS.max });
+    const DEFAULT_LANE = Object.freeze({ label: "Lane 1", color: "#1e293b", opacity: 0.62 });
+
     const model = {
       schema: "Timeline_Discussion_Canvas.v1",
-      axis: { label: "Relative time (schematic)", max: 240 },
+      axis: { ...DEFAULT_AXIS },
       lanes: [
         { id: "lane-1", label: "Discussion lane", color: "#1e293b", opacity: 0.62 }
       ],
       items: [],
-      view: { scale: 1, tx: 0, ty: 0, timeStart: 0, timeSpan: 240 }
+      view: { ...DEFAULT_VIEW }
     };
 
     const state = {
@@ -695,7 +699,7 @@
     }
 
     function viewSpan() {
-      const fallback = model.axis.max || 240;
+      const fallback = model.axis.max || DEFAULT_AXIS.max;
       return Math.max(1, Math.min(model.axis.max, Number(model.view.timeSpan) || fallback));
     }
 
@@ -747,6 +751,34 @@
       svg.style.aspectRatio = `${layout.viewWidth} / ${h}`;
     }
 
+    function createDefaultLane() {
+      return {
+        id: `lane-${Date.now()}-${state.laneSeq++}`,
+        label: DEFAULT_LANE.label,
+        color: DEFAULT_LANE.color,
+        opacity: DEFAULT_LANE.opacity
+      };
+    }
+
+    function resetInteractionState() {
+      state.selected = null;
+      state.addMode = null;
+      state.draggingCanvas = false;
+      state.draggingItem = null;
+      state.resizingItem = null;
+      state.lastPointer = null;
+      document.getElementById("addBlock")?.classList.remove("active");
+      document.getElementById("addSignal")?.classList.remove("active");
+      document.getElementById("addGuide")?.classList.remove("active");
+    }
+
+    function resetViewToDefault() {
+      model.view.scale = DEFAULT_VIEW.scale;
+      model.view.tx = DEFAULT_VIEW.tx;
+      model.view.ty = DEFAULT_VIEW.ty;
+      setTimeViewport(DEFAULT_VIEW.timeStart, model.axis.max);
+    }
+
     function render() {
       state.renderPending = false;
       svg.innerHTML = "";
@@ -790,7 +822,7 @@
     }
 
     function syncAxisInputs() {
-      if (document.activeElement !== axisMaxInput) axisMaxInput.value = model.axis.max || 240;
+      if (document.activeElement !== axisMaxInput) axisMaxInput.value = model.axis.max || DEFAULT_AXIS.max;
     }
 
     function syncTimeTicksButton() {
@@ -1237,12 +1269,18 @@
       render();
     }
 
-    function clearCanvas() {
-      if (!confirm("Clear all lanes and items?")) return;
+    function resetCanvas() {
+      if (!confirm("Reset canvas to a blank timeline? This removes all lanes, items, and view settings.")) return;
       commitHistory();
-      model.lanes = [{ id: `lane-${Date.now()}`, label: "Lane 1", color: "#1e293b", opacity: 0.62 }];
+      model.axis = { ...DEFAULT_AXIS };
+      state.laneSeq = 1;
+      state.itemSeq = 1;
+      model.lanes = [createDefaultLane()];
       model.items = [];
-      state.selected = null;
+      state.showTimeTicks = false;
+      syncTimeTicksButton();
+      resetInteractionState();
+      resetViewToDefault();
       showEmptyInspector();
       render();
     }
@@ -1271,20 +1309,20 @@
 
     function hydrate(payload) {
       model.schema = payload.schema || "Timeline_Discussion_Canvas.v1";
-      model.axis = payload.axis || { label: "Relative time (schematic)", max: 240 };
-      model.axis.max = Math.max(10, Number(model.axis.max) || 240);
-      model.axis.label = model.axis.label || "Relative time (schematic)";
-      model.view = payload.view || { scale: 1, tx: 0, ty: 0 };
-      if (typeof model.view.scale !== "number") model.view.scale = 1;
-      if (typeof model.view.tx !== "number") model.view.tx = 0;
-      if (typeof model.view.ty !== "number") model.view.ty = 0;
+      model.axis = payload.axis || { ...DEFAULT_AXIS };
+      model.axis.max = Math.max(10, Number(model.axis.max) || DEFAULT_AXIS.max);
+      model.axis.label = model.axis.label || DEFAULT_AXIS.label;
+      model.view = payload.view || { ...DEFAULT_VIEW };
+      if (typeof model.view.scale !== "number") model.view.scale = DEFAULT_VIEW.scale;
+      if (typeof model.view.tx !== "number") model.view.tx = DEFAULT_VIEW.tx;
+      if (typeof model.view.ty !== "number") model.view.ty = DEFAULT_VIEW.ty;
       if (typeof model.view.timeSpan !== "number") model.view.timeSpan = model.axis.max;
-      if (typeof model.view.timeStart !== "number") model.view.timeStart = 0;
+      if (typeof model.view.timeStart !== "number") model.view.timeStart = DEFAULT_VIEW.timeStart;
       setTimeViewport(model.view.timeStart, model.view.timeSpan);
-      model.lanes = payload.lanes.length ? payload.lanes : [{ id: "lane-1", label: "Lane 1" }];
+      model.lanes = payload.lanes.length ? payload.lanes : [createDefaultLane()];
       for (const lane of model.lanes) {
-        if (!lane.color) lane.color = "#1e293b";
-        if (lane.opacity === undefined) lane.opacity = 0.62;
+        if (!lane.color) lane.color = DEFAULT_LANE.color;
+        if (lane.opacity === undefined) lane.opacity = DEFAULT_LANE.opacity;
       }
       const laneIds = new Set(model.lanes.map(lane => lane.id));
       model.items = (payload.items || []).filter(item => laneIds.has(item.laneId));
@@ -1412,12 +1450,9 @@
     document.getElementById("deleteSelected").addEventListener("click", deleteSelected);
     document.getElementById("undoBtn").addEventListener("click", undo);
     document.getElementById("redoBtn").addEventListener("click", redo);
-    document.getElementById("clearCanvas").addEventListener("click", clearCanvas);
+    document.getElementById("resetCanvas").addEventListener("click", resetCanvas);
     document.getElementById("resetView").addEventListener("click", () => {
-      model.view.scale = 1;
-      model.view.tx = 0;
-      model.view.ty = 0;
-      setTimeViewport(0, model.axis.max);
+      resetViewToDefault();
       render();
     });
     document.getElementById("zoomInTime").addEventListener("click", () => zoomTime(0.5));
@@ -1438,202 +1473,7 @@
     });
     axisMaxInput.addEventListener("change", () => {
       commitHistory();
-      const nextMax = Math.max(10, Number(axisMaxInput.value) || 240);
-      model.axis.max = nextMax;
-      setTimeViewport(viewStart(), Math.min(viewSpan(), nextMax));
-      for (const item of model.items) {
-        if (item.kind === "signal" || item.kind === "guide") {
-          item.cycle = Math.min(item.cycle, nextMax);
-        } else {
-          item.start = Math.min(item.start, Math.max(0, nextMax - 1));
-          item.end = Math.min(item.end, nextMax);
-          if (item.end <= item.start) item.end = Math.min(nextMax, item.start + 1);
-        }
-      }
-      render();
-    });
-    importFile.addEventListener("change", async ev => {
-      const file = ev.target.files && ev.target.files[0];
-      if (!file) return;
-      try {
-        importJson(JSON.parse(await file.text()));
-      } catch (err) {
-        alert(err.message || String(err));
-      } finally {
-        ev.target.value = "";
-      }
-    });
-
-    function setAddMode(kind) {
-      state.addMode = state.addMode === kind ? null : kind;
-      document.getElementById("addBlock").classList.toggle("active", state.addMode === "block");
-      document.getElementById("addSignal").classList.toggle("active", state.addMode === "signal");
-      document.getElementById("addGuide").classList.toggle("active", state.addMode === "guide");
-    }
-
-    function itemFromEventTarget(target) {
-      const el = target && target.closest ? target.closest(".item") : null;
-      if (!el || !el.dataset) return null;
-      return getItem(el.dataset.id);
-    }
-
-    svg.addEventListener("pointerdown", ev => {
-      ev.preventDefault();
-      if (state.resizingItem) return;
-      const item = itemFromEventTarget(ev.target);
-      if (item) {
-        startItemDrag(item, ev);
-        return;
-      }
-      if (state.addMode) {
-        addItemAt(ev, state.addMode);
-        return;
-      }
-      state.draggingCanvas = true;
-      state.lastPointer = { x: ev.clientX, y: ev.clientY };
-      svg.setPointerCapture(ev.pointerId);
-    });
-
-    svg.addEventListener("mousedown", ev => {
-      const item = itemFromEventTarget(ev.target);
-      if (!item) return;
-      startItemDrag(item, ev);
-    });
-
-    svg.addEventListener("pointermove", ev => {
-      if (state.resizingItem) {
-        ev.preventDefault();
-        resizeSelectedItem(ev);
-        return;
-      }
-      if (state.draggingItem) {
-        ev.preventDefault();
-        dragSelectedItem(ev);
-        return;
-      }
-      if (!state.draggingCanvas || !state.lastPointer) return;
-      model.view.tx += ev.clientX - state.lastPointer.x;
-      model.view.ty += ev.clientY - state.lastPointer.y;
-      state.lastPointer = { x: ev.clientX, y: ev.clientY };
-      render();
-    });
-
-    svg.addEventListener("pointerup", () => {
-      state.draggingCanvas = false;
-      state.lastPointer = null;
-      state.draggingItem = null;
-      state.resizingItem = null;
-    });
-
-    window.addEventListener("mousemove", ev => {
-      if (state.resizingItem) {
-        ev.preventDefault();
-        resizeSelectedItem(ev);
-        return;
-      }
-      if (!state.draggingItem) return;
-      ev.preventDefault();
-      dragSelectedItem(ev);
-    }, { passive: false });
-
-    window.addEventListener("mouseup", () => {
-      state.draggingItem = null;
-      state.resizingItem = null;
-      state.draggingCanvas = false;
-      state.lastPointer = null;
-    });
-
-    function cycleDeltaFromPointer(ev, startClientX) {
-      const rect = svg.getBoundingClientRect();
-      const viewDx = (ev.clientX - startClientX) / Math.max(1, rect.width) * layout.viewWidth / Math.max(.001, model.view.scale);
-      return (viewDx / axisWidth()) * viewSpan();
-    }
-
-    function resizeSelectedItem(ev) {
-      if (!state.resizingItem) return;
-      const item = getItem(state.resizingItem.id);
-      if (!item || item.kind === "signal") return;
-      const delta = cycleDeltaFromPointer(ev, state.resizingItem.startClientX);
-      if (state.resizingItem.side === "left") {
-        const nextStart = clampCycle(state.resizingItem.originalStart + delta);
-        item.start = Math.min(nextStart, item.end - 1);
-      } else {
-        const nextEnd = clampCycle(state.resizingItem.originalEnd + delta);
-        item.end = Math.max(nextEnd, item.start + 1);
-      }
-      if (state.selected && state.selected.type === "item" && state.selected.id === item.id) showItemInspector(item);
-      render();
-    }
-
-    function dragSelectedItem(ev) {
-      if (!state.draggingItem) return;
-      const item = getItem(state.draggingItem.id);
-      if (!item) return;
-      const delta = cycleDeltaFromPointer(ev, state.draggingItem.startClientX);
-      if (Math.abs(ev.clientX - state.draggingItem.startClientX) > 2) state.draggingItem.moved = true;
-      if (item.kind === "signal" || item.kind === "guide") {
-        item.cycle = clampCycle(state.draggingItem.original.cycle + delta);
-      } else {
-        const duration = item.end - item.start;
-        item.start = clampCycle(state.draggingItem.original.start + delta);
-        item.end = Math.min(model.axis.max, Math.round((item.start + duration) * 10) / 10);
-      }
-      if (state.selected && state.selected.type === "item" && state.selected.id === item.id) showItemInspector(item);
-      render();
-    }
-
-    svg.addEventListener("wheel", ev => {
-      ev.preventDefault();
-      const point = viewPointFromClient(ev);
-      const anchorCycle = cycleFromViewX(point.x);
-      const factor = ev.deltaY < 0 ? 0.85 : 1.18;
-      zoomTime(factor, anchorCycle);
-    }, { passive: false });
-
-    inspector.addEventListener("focusin", commitHistory);
-
-    window.addEventListener("keydown", ev => {
-      if (!(ev.ctrlKey || ev.metaKey)) return;
-      const key = ev.key.toLowerCase();
-      if (key !== "z" && key !== "y") return;
-      const ae = document.activeElement;
-      if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
-      ev.preventDefault();
-      if (key === "y" || (key === "z" && ev.shiftKey)) redo();
-      else undo();
-    });
-
-    loadTheme();
-    loadLocal();
-    document.getElementById("undoBtn").addEventListener("click", undo);
-    document.getElementById("redoBtn").addEventListener("click", redo);
-    document.getElementById("clearCanvas").addEventListener("click", clearCanvas);
-    document.getElementById("resetView").addEventListener("click", () => {
-      model.view.scale = 1;
-      model.view.tx = 0;
-      model.view.ty = 0;
-      setTimeViewport(0, model.axis.max);
-      render();
-    });
-    document.getElementById("zoomInTime").addEventListener("click", () => zoomTime(0.5));
-    document.getElementById("zoomOutTime").addEventListener("click", () => zoomTime(2));
-    document.getElementById("fitTimeline").addEventListener("click", () => {
-      setTimeViewport(0, model.axis.max);
-      render();
-    });
-    document.getElementById("toggleTimeTicks").addEventListener("click", () => {
-      state.showTimeTicks = !state.showTimeTicks;
-      syncTimeTicksButton();
-      render();
-    });
-    document.getElementById("exportJson").addEventListener("click", exportJson);
-    document.getElementById("importJson").addEventListener("click", () => importFile.click());
-    themeSelect.addEventListener("change", ev => {
-      applyTheme(ev.target.value);
-    });
-    axisMaxInput.addEventListener("change", () => {
-      commitHistory();
-      const nextMax = Math.max(10, Number(axisMaxInput.value) || 240);
+      const nextMax = Math.max(10, Number(axisMaxInput.value) || DEFAULT_AXIS.max);
       model.axis.max = nextMax;
       setTimeViewport(viewStart(), Math.min(viewSpan(), nextMax));
       for (const item of model.items) {
