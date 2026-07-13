@@ -436,6 +436,24 @@
       font-weight: 850;
       cursor: ew-resize;
     }
+    .snapGuide {
+      stroke: var(--accent);
+      stroke-width: 1.8;
+      stroke-dasharray: 5 6;
+      opacity: .85;
+      pointer-events: none;
+    }
+    .copyPreview {
+      opacity: .62;
+      pointer-events: none;
+    }
+    .copyPreview rect,
+    .copyPreview circle.signalDot,
+    .copyPreview line.signalStem {
+      stroke: var(--accent);
+      stroke-width: 2;
+      stroke-dasharray: 6 5;
+    }
     .pill {
       display: inline-flex;
       align-items: center;
@@ -590,6 +608,7 @@
         <h3>Fast workflow</h3>
         <ul>
           <li>Pick an add mode, then click the canvas.</li>
+          <li>Select an object, press <code>Ctrl+C</code>, then click the canvas to place a snapped copy.</li>
           <li>Drag the canvas to pan; use the wheel to zoom time around the pointer.</li>
           <li>Export JSON when the discussion state should travel with the note.</li>
         </ul>
@@ -612,6 +631,8 @@
     const FOCUS_PADDING_RATIO = 0.25;
     const MIN_FOCUS_SPAN_RATIO = 0.08;
     const READONLY_CONTROL_IDS = new Set(["exportJson"]);
+    const SNAP_GRID_CYCLE = 5;
+    const SNAP_PIXEL_THRESHOLD = 12;
 
     const model = {
       schema: "Timeline_Discussion_Canvas.v1",
@@ -634,7 +655,10 @@
       itemSeq: 1,
       renderPending: false,
       showTimeTicks: false,
-      editingLocked: false
+      editingLocked: false,
+      copyPlacement: null,
+      snapGuideCycle: null,
+      ignoreNextMouseDown: false
     };
 
     const layout = {
@@ -697,6 +721,42 @@
     function cycleFromViewX(viewX) {
       const cycle = viewStart() + ((viewX - layout.left) / axisWidth()) * viewSpan();
       return Math.round(Math.max(0, Math.min(model.axis.max, cycle)) * 10) / 10;
+    }
+
+    function snapThresholdCycles() {
+      const scale = Math.max(.001, Number(model.view.scale) || DEFAULT_VIEW.scale);
+      return (SNAP_PIXEL_THRESHOLD / scale / axisWidth()) * viewSpan();
+    }
+
+    function snapCycle(cycle, excludeItemId = null) {
+      const raw = clampCycle(cycle);
+      const candidates = [0, model.axis.max];
+      for (let c = SNAP_GRID_CYCLE; c < model.axis.max; c += SNAP_GRID_CYCLE) {
+        candidates.push(c);
+      }
+      for (const item of model.items) {
+        if (item.id === excludeItemId) continue;
+        if (item.kind === "signal" || item.kind === "guide") {
+          candidates.push(item.cycle);
+        } else {
+          candidates.push(item.start, item.end);
+        }
+      }
+      let best = raw;
+      let bestDistance = snapThresholdCycles();
+      for (const candidate of candidates) {
+        const distance = Math.abs(candidate - raw);
+        if (distance <= bestDistance) {
+          best = candidate;
+          bestDistance = distance;
+        }
+      }
+      state.snapGuideCycle = best === raw ? null : best;
+      return clampCycle(best);
+    }
+
+    function clearSnapGuide() {
+      state.snapGuideCycle = null;
     }
 
     function viewStart() {
@@ -776,6 +836,8 @@
       state.draggingItem = null;
       state.resizingItem = null;
       state.lastPointer = null;
+      state.copyPlacement = null;
+      clearSnapGuide();
       document.getElementById("addBlock")?.classList.remove("active");
       document.getElementById("addSignal")?.classList.remove("active");
       document.getElementById("addGuide")?.classList.remove("active");
@@ -854,6 +916,8 @@
       drawAxis(root);
       drawLanes(root);
       drawItems(root);
+      drawCopyPreview(root);
+      drawSnapGuide(root);
       saveLocal();
     }
 
@@ -875,6 +939,55 @@
           g.appendChild(make("line", { class: "gridLine", x1: xx, y1: 38, x2: xx, y2: contentHeight() - 30 }));
           g.appendChild(make("text", { class: "cycleLabel", x: xx - 10, y: 14 }, c));
         }
+      }
+      root.appendChild(g);
+    }
+
+    function drawSnapGuide(root) {
+      if (state.snapGuideCycle === null) return;
+      const xx = x(state.snapGuideCycle);
+      root.appendChild(make("line", {
+        class: "snapGuide",
+        x1: xx,
+        y1: 34,
+        x2: xx,
+        y2: contentHeight() - 28
+      }));
+    }
+
+    function drawCopyPreview(root) {
+      if (!state.copyPlacement || !state.copyPlacement.preview) return;
+      drawPreviewItem(root, state.copyPlacement.preview);
+    }
+
+    function drawPreviewItem(root, item) {
+      const lane = getLane(item.laneId);
+      if (!lane) return;
+      const y = itemY(item);
+      const g = make("g", { class: "item copyPreview" });
+      if (item.kind === "guide") {
+        const xx = x(item.cycle);
+        const lineColor = item.lineColor || colorMap.guide;
+        const labelBoxColor = item.labelBoxColor || "rgba(15,23,42,.92)";
+        const textColor = item.labelBoxColor ? contrastTextColor(item.labelBoxColor) : "#f8fafc";
+        const top = layout.top - 46;
+        const bottom = contentHeight() - layout.bottomPad + 12;
+        const labelWidth = Math.max(72, item.label.length * 7 + 22);
+        g.appendChild(make("line", { class: "guideLine", x1: xx, y1: top + 24, x2: xx, y2: bottom, style: `stroke:${lineColor}` }));
+        g.appendChild(make("rect", { class: "guideLabelBg", x: xx - labelWidth / 2, y: top, width: labelWidth, height: 24, style: `fill:${labelBoxColor};stroke:${lineColor}` }));
+        g.appendChild(make("text", { class: "guideLabel", x: xx - labelWidth / 2 + 10, y: top + 16, style: `fill:${textColor}` }, item.label));
+      } else if (item.kind === "signal") {
+        const xx = x(item.cycle);
+        const color = colorMap[item.type] || colorMap.signal;
+        const topY = y - 18;
+        g.appendChild(make("line", { class: "signalStem", x1: xx, y1: topY, x2: xx, y2: y + layout.itemHeight + 16, stroke: color }));
+        g.appendChild(make("circle", { class: "signalDot", cx: xx, cy: topY, r: 8, fill: color }));
+        g.appendChild(make("text", { x: xx + 14, y: topY + 4 }, item.label));
+      } else {
+        const xx = x(item.start);
+        const width = Math.max(28, x(item.end) - x(item.start));
+        g.appendChild(make("rect", { x: xx, y, width, height: layout.itemHeight, fill: colorMap[item.type] || colorMap.custom }));
+        g.appendChild(make("text", { x: xx + 8, y: y + 17 }, item.label));
       }
       root.appendChild(g);
     }
@@ -1073,6 +1186,75 @@
       return best;
     }
 
+    function cloneItemForPlacement(item, assignId = false) {
+      const copy = JSON.parse(JSON.stringify(item));
+      if (assignId) copy.id = `item-${Date.now()}-${state.itemSeq++}`;
+      copy.label = `${item.label || "Item"} copy`;
+      return copy;
+    }
+
+    function updatePlacementPreview(ev) {
+      if (!state.copyPlacement) return;
+      const point = viewPointFromClient(ev);
+      const lane = laneFromViewY(point.y);
+      const source = state.copyPlacement.source;
+      const preview = cloneItemForPlacement(source);
+      preview.laneId = source.kind === "guide" ? source.laneId : lane.id;
+      if (source.kind === "signal" || source.kind === "guide") {
+        preview.cycle = snapCycle(cycleFromViewX(point.x), source.id);
+      } else {
+        const duration = Math.max(1, source.end - source.start);
+        let start = snapCycle(cycleFromViewX(point.x), source.id);
+        if (start + duration > model.axis.max) start = Math.max(0, model.axis.max - duration);
+        preview.start = clampCycle(start);
+        preview.end = clampCycle(preview.start + duration);
+      }
+      state.copyPlacement.preview = preview;
+    }
+
+    function beginCopyPlacement(item) {
+      if (state.editingLocked || !item || state.selected?.type !== "item") return;
+      state.addMode = null;
+      state.draggingCanvas = false;
+      state.draggingItem = null;
+      state.resizingItem = null;
+      state.copyPlacement = {
+        source: JSON.parse(JSON.stringify(item)),
+        preview: null
+      };
+      document.getElementById("addBlock")?.classList.remove("active");
+      document.getElementById("addSignal")?.classList.remove("active");
+      document.getElementById("addGuide")?.classList.remove("active");
+      svg.style.cursor = "copy";
+      clearSnapGuide();
+      render();
+    }
+
+    function cancelCopyPlacement() {
+      if (!state.copyPlacement) return;
+      state.copyPlacement = null;
+      svg.style.cursor = "";
+      clearSnapGuide();
+      render();
+    }
+
+    function placeCopyAt(ev) {
+      if (state.editingLocked || !state.copyPlacement) return;
+      updatePlacementPreview(ev);
+      const copy = state.copyPlacement.preview;
+      if (!copy) return;
+      commitHistory();
+      copy.id = `item-${Date.now()}-${state.itemSeq++}`;
+      model.items.push(copy);
+      state.copyPlacement = null;
+      svg.style.cursor = "";
+      clearSnapGuide();
+      state.ignoreNextMouseDown = true;
+      state.selected = { type: "item", id: copy.id };
+      showItemInspector(copy);
+      render();
+    }
+
     function addLane() {
       if (state.editingLocked) return;
       commitHistory();
@@ -1102,7 +1284,7 @@
       commitHistory();
       const point = viewPointFromClient(ev);
       const lane = laneFromViewY(point.y);
-      const cycle = cycleFromViewX(point.x);
+      const cycle = snapCycle(cycleFromViewX(point.x));
       const item = kind === "guide"
         ? {
             id: `item-${Date.now()}-${state.itemSeq++}`,
@@ -1144,6 +1326,7 @@
       document.getElementById("addSignal").classList.remove("active");
       document.getElementById("addGuide").classList.remove("active");
       showItemInspector(item);
+      clearSnapGuide();
       render();
       setTimeout(render, 0);
     }
@@ -1627,6 +1810,7 @@
     });
 
     function setAddMode(kind) {
+      cancelCopyPlacement();
       state.addMode = state.addMode === kind ? null : kind;
       document.getElementById("addBlock").classList.toggle("active", state.addMode === "block");
       document.getElementById("addSignal").classList.toggle("active", state.addMode === "signal");
@@ -1642,6 +1826,10 @@
     svg.addEventListener("pointerdown", ev => {
       ev.preventDefault();
       if (state.resizingItem) return;
+      if (state.copyPlacement) {
+        placeCopyAt(ev);
+        return;
+      }
       const item = itemFromEventTarget(ev.target);
       if (item) {
         startItemDrag(item, ev);
@@ -1657,12 +1845,22 @@
     });
 
     svg.addEventListener("mousedown", ev => {
+      if (state.ignoreNextMouseDown) {
+        state.ignoreNextMouseDown = false;
+        return;
+      }
       const item = itemFromEventTarget(ev.target);
       if (!item) return;
       startItemDrag(item, ev);
     });
 
     svg.addEventListener("pointermove", ev => {
+      if (state.copyPlacement) {
+        ev.preventDefault();
+        updatePlacementPreview(ev);
+        render();
+        return;
+      }
       if (state.resizingItem) {
         ev.preventDefault();
         resizeSelectedItem(ev);
@@ -1682,11 +1880,13 @@
 
     svg.addEventListener("pointerup", () => {
       const shouldRefreshSelection = state.draggingItem && !state.draggingItem.moved;
+      const hadSnapGuide = state.snapGuideCycle !== null;
       state.draggingCanvas = false;
       state.lastPointer = null;
       state.draggingItem = null;
       state.resizingItem = null;
-      if (shouldRefreshSelection) scheduleRender();
+      if (!state.copyPlacement) clearSnapGuide();
+      if (shouldRefreshSelection || hadSnapGuide) scheduleRender();
     });
 
     window.addEventListener("mousemove", ev => {
@@ -1702,11 +1902,13 @@
 
     window.addEventListener("mouseup", () => {
       const shouldRefreshSelection = state.draggingItem && !state.draggingItem.moved;
+      const hadSnapGuide = state.snapGuideCycle !== null;
       state.draggingItem = null;
       state.resizingItem = null;
       state.draggingCanvas = false;
       state.lastPointer = null;
-      if (shouldRefreshSelection) scheduleRender();
+      if (!state.copyPlacement) clearSnapGuide();
+      if (shouldRefreshSelection || hadSnapGuide) scheduleRender();
     });
 
     function cycleDeltaFromPointer(ev, startClientX) {
@@ -1721,10 +1923,10 @@
       if (!item || item.kind === "signal") return;
       const delta = cycleDeltaFromPointer(ev, state.resizingItem.startClientX);
       if (state.resizingItem.side === "left") {
-        const nextStart = clampCycle(state.resizingItem.originalStart + delta);
+        const nextStart = snapCycle(state.resizingItem.originalStart + delta, item.id);
         item.start = Math.min(nextStart, item.end - 1);
       } else {
-        const nextEnd = clampCycle(state.resizingItem.originalEnd + delta);
+        const nextEnd = snapCycle(state.resizingItem.originalEnd + delta, item.id);
         item.end = Math.max(nextEnd, item.start + 1);
       }
       if (state.selected && state.selected.type === "item" && state.selected.id === item.id) showItemInspector(item);
@@ -1738,10 +1940,11 @@
       const delta = cycleDeltaFromPointer(ev, state.draggingItem.startClientX);
       if (Math.abs(ev.clientX - state.draggingItem.startClientX) > 2) state.draggingItem.moved = true;
       if (item.kind === "signal" || item.kind === "guide") {
-        item.cycle = clampCycle(state.draggingItem.original.cycle + delta);
+        item.cycle = snapCycle(state.draggingItem.original.cycle + delta, item.id);
       } else {
         const duration = item.end - item.start;
-        item.start = clampCycle(state.draggingItem.original.start + delta);
+        item.start = snapCycle(state.draggingItem.original.start + delta, item.id);
+        if (item.start + duration > model.axis.max) item.start = Math.max(0, model.axis.max - duration);
         item.end = Math.min(model.axis.max, Math.round((item.start + duration) * 10) / 10);
       }
       if (state.selected && state.selected.type === "item" && state.selected.id === item.id) showItemInspector(item);
@@ -1759,10 +1962,22 @@
     inspector.addEventListener("focusin", commitHistory);
 
     window.addEventListener("keydown", ev => {
+      if (ev.key === "Escape" && state.copyPlacement) {
+        ev.preventDefault();
+        cancelCopyPlacement();
+        return;
+      }
       if (!(ev.ctrlKey || ev.metaKey)) return;
       const key = ev.key.toLowerCase();
       const ae = document.activeElement;
       if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
+      if (key === "c") {
+        const item = selectedObject();
+        if (!item || state.selected?.type !== "item" || state.editingLocked) return;
+        ev.preventDefault();
+        beginCopyPlacement(item);
+        return;
+      }
       if (key === "d") {
         const item = selectedObject();
         if (!item || item.kind !== "block" || state.editingLocked) return;
