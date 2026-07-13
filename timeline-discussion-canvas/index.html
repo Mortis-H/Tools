@@ -1024,6 +1024,8 @@
         ? { cycle: item.cycle }
         : { start: item.start, end: item.end };
       state.draggingItem = { id: item.id, pointerId: ev.pointerId, startClientX: ev.clientX, original, moved: false };
+      render();
+      scheduleRender();
     }
 
     function startResize(item, side, ev) {
@@ -1679,10 +1681,12 @@
     });
 
     svg.addEventListener("pointerup", () => {
+      const shouldRefreshSelection = state.draggingItem && !state.draggingItem.moved;
       state.draggingCanvas = false;
       state.lastPointer = null;
       state.draggingItem = null;
       state.resizingItem = null;
+      if (shouldRefreshSelection) scheduleRender();
     });
 
     window.addEventListener("mousemove", ev => {
@@ -1697,10 +1701,12 @@
     }, { passive: false });
 
     window.addEventListener("mouseup", () => {
+      const shouldRefreshSelection = state.draggingItem && !state.draggingItem.moved;
       state.draggingItem = null;
       state.resizingItem = null;
       state.draggingCanvas = false;
       state.lastPointer = null;
+      if (shouldRefreshSelection) scheduleRender();
     });
 
     function cycleDeltaFromPointer(ev, startClientX) {
