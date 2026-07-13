@@ -608,6 +608,10 @@
     const DEFAULT_AXIS = Object.freeze({ label: "Relative time (schematic)", max: 240 });
     const DEFAULT_VIEW = Object.freeze({ scale: 1, tx: 0, ty: 0, timeStart: 0, timeSpan: DEFAULT_AXIS.max });
     const DEFAULT_LANE = Object.freeze({ label: "Lane 1", color: "#1e293b", opacity: 0.62 });
+    const DUPLICATE_OFFSET_RATIO = 0.05;
+    const FOCUS_PADDING_RATIO = 0.25;
+    const MIN_FOCUS_SPAN_RATIO = 0.08;
+    const READONLY_CONTROL_IDS = new Set(["exportJson"]);
 
     const model = {
       schema: "Timeline_Discussion_Canvas.v1",
@@ -629,7 +633,8 @@
       laneSeq: 2,
       itemSeq: 1,
       renderPending: false,
-      showTimeTicks: false
+      showTimeTicks: false,
+      editingLocked: false
     };
 
     const layout = {
@@ -745,6 +750,10 @@
       return laneY(Math.max(0, idx)) + 30;
     }
 
+    function laneCenterY(laneId) {
+      return laneY(Math.max(0, laneIndex(laneId))) + layout.laneHeight / 2;
+    }
+
     function updateSvgSize() {
       const h = contentHeight();
       svg.setAttribute("viewBox", `0 0 ${layout.viewWidth} ${h}`);
@@ -772,11 +781,67 @@
       document.getElementById("addGuide")?.classList.remove("active");
     }
 
+    function isReadOnlyAction(el) {
+      return el.dataset.readonlyAction === "true" || READONLY_CONTROL_IDS.has(el.id);
+    }
+
+    function applyEditingLock() {
+      const toolbar = document.querySelector(".toolbar");
+      const canvasWrap = document.getElementById("canvasWrap");
+      if (state.editingLocked) {
+        state.addMode = null;
+        document.getElementById("addBlock")?.classList.remove("active");
+        document.getElementById("addSignal")?.classList.remove("active");
+        document.getElementById("addGuide")?.classList.remove("active");
+      }
+      if (toolbar) {
+        toolbar.style.opacity = state.editingLocked ? "0.75" : "1";
+        toolbar.style.pointerEvents = "auto";
+      }
+      if (canvasWrap) canvasWrap.style.pointerEvents = "auto";
+      document.querySelectorAll(".toolbar button, .toolbar input, .toolbar select, aside button, aside input, aside select, aside textarea").forEach(el => {
+        el.disabled = state.editingLocked && !isReadOnlyAction(el);
+      });
+    }
+
     function resetViewToDefault() {
       model.view.scale = DEFAULT_VIEW.scale;
       model.view.tx = DEFAULT_VIEW.tx;
       model.view.ty = DEFAULT_VIEW.ty;
       setTimeViewport(DEFAULT_VIEW.timeStart, model.axis.max);
+    }
+
+    function centerViewOnY(localY) {
+      const scale = Math.max(.001, Number(model.view.scale) || DEFAULT_VIEW.scale);
+      const visibleHeight = svg.viewBox.baseVal && svg.viewBox.baseVal.height
+        ? svg.viewBox.baseVal.height
+        : contentHeight();
+      model.view.ty = Math.round((visibleHeight / 2) - (localY * scale));
+    }
+
+    function focusTimeRange(start, end = start) {
+      const safeStart = clampCycle(Math.min(start, end));
+      const safeEnd = clampCycle(Math.max(start, end));
+      const rawSpan = Math.max(0, safeEnd - safeStart);
+      const minSpan = Math.max(1, model.axis.max * MIN_FOCUS_SPAN_RATIO);
+      const paddedSpan = rawSpan * (1 + FOCUS_PADDING_RATIO * 2);
+      const nextSpan = Math.min(model.axis.max, Math.max(minSpan, paddedSpan || viewSpan()));
+      const center = rawSpan > 0 ? safeStart + rawSpan / 2 : safeStart;
+      setTimeViewport(center - nextSpan / 2, nextSpan);
+    }
+
+    function focusObject(target = selectedObject()) {
+      if (!target) return;
+      if (state.selected && state.selected.type === "lane") {
+        centerViewOnY(laneCenterY(target.id));
+      } else if (target.kind === "signal" || target.kind === "guide") {
+        focusTimeRange(target.cycle);
+        centerViewOnY(laneCenterY(target.laneId));
+      } else {
+        focusTimeRange(target.start, target.end);
+        centerViewOnY(itemY(target) + layout.itemHeight / 2);
+      }
+      render();
     }
 
     function render() {
@@ -945,12 +1010,16 @@
       ev.stopPropagation();
       ev.preventDefault();
       if (state.resizingItem) return;
+      state.selected = { type: "item", id: item.id };
+      showItemInspector(item);
+      if (state.editingLocked) {
+        render();
+        return;
+      }
       commitHistory();
       if (ev.pointerId !== undefined && svg.setPointerCapture) {
         try { svg.setPointerCapture(ev.pointerId); } catch (_) {}
       }
-      state.selected = { type: "item", id: item.id };
-      showItemInspector(item);
       const original = item.kind === "signal" || item.kind === "guide"
         ? { cycle: item.cycle }
         : { start: item.start, end: item.end };
@@ -960,6 +1029,7 @@
     function startResize(item, side, ev) {
       ev.stopPropagation();
       ev.preventDefault();
+      if (state.editingLocked) return;
       if (item.kind === "signal") return;
       commitHistory();
       if (ev.pointerId !== undefined && svg.setPointerCapture) {
@@ -1002,6 +1072,7 @@
     }
 
     function addLane() {
+      if (state.editingLocked) return;
       commitHistory();
       const lane = { id: `lane-${Date.now()}-${state.laneSeq++}`, label: `Lane ${model.lanes.length + 1}`, color: "#1e293b", opacity: 0.62 };
       model.lanes.push(lane);
@@ -1011,6 +1082,7 @@
     }
 
     function moveLane(laneId, direction) {
+      if (state.editingLocked) return;
       const index = laneIndex(laneId);
       if (index < 0) return;
       const target = index + direction;
@@ -1024,6 +1096,7 @@
     }
 
     function addItemAt(ev, kind) {
+      if (state.editingLocked) return;
       commitHistory();
       const point = viewPointFromClient(ev);
       const lane = laneFromViewY(point.y);
@@ -1073,6 +1146,35 @@
       setTimeout(render, 0);
     }
 
+    function duplicateBlock(item) {
+      if (state.editingLocked) return;
+      if (!item || item.kind !== "block") return;
+      commitHistory();
+      const duration = Math.max(1, item.end - item.start);
+      const offset = Math.max(1, Math.min(duration, model.axis.max * DUPLICATE_OFFSET_RATIO));
+      let start = item.start;
+      let end = item.end;
+      if (item.end + offset <= model.axis.max) {
+        start += offset;
+        end += offset;
+      } else if (item.start - offset >= 0) {
+        start -= offset;
+        end -= offset;
+      }
+      const copy = {
+        ...JSON.parse(JSON.stringify(item)),
+        id: `item-${Date.now()}-${state.itemSeq++}`,
+        label: `${item.label || "Block"} copy`,
+        start: clampCycle(start),
+        end: clampCycle(end)
+      };
+      if (copy.end <= copy.start) copy.end = Math.min(model.axis.max, copy.start + duration);
+      model.items.push(copy);
+      state.selected = { type: "item", id: copy.id };
+      showItemInspector(copy);
+      focusObject(copy);
+    }
+
     function showLaneInspector(lane) {
       const index = laneIndex(lane.id);
       inspector.innerHTML = `
@@ -1082,6 +1184,7 @@
           <div class="fieldLabel">Background color ${renderSwatches(lane.color || "#1e293b", "lane")}</div>
           <label>Background opacity <input id="laneOpacity" type="range" min="0" max="1" step="0.05" value="${lane.opacity ?? 0.62}" /></label>
           <div class="buttonRow">
+            <button id="focusLane" data-readonly-action="true">Focus lane</button>
             <button id="laneUp">Move up</button>
             <button id="laneDown">Move down</button>
             <button id="deleteLane">Delete lane</button>
@@ -1101,6 +1204,9 @@
         lane.opacity = Number(ev.target.value);
         render();
       });
+      document.getElementById("focusLane").addEventListener("click", () => {
+        focusObject(lane);
+      });
       document.getElementById("laneUp").addEventListener("click", () => {
         moveLane(lane.id, -1);
       });
@@ -1108,6 +1214,7 @@
         moveLane(lane.id, 1);
       });
       document.getElementById("deleteLane").addEventListener("click", () => {
+        if (state.editingLocked) return;
         if (model.lanes.length <= 1) {
           alert("Keep at least one lane.");
           return;
@@ -1120,12 +1227,14 @@
         showEmptyInspector();
         render();
       });
+      applyEditingLock();
     }
 
     function showItemInspector(item) {
       const lanes = model.lanes.map(lane => `<option value="${lane.id}" ${item.laneId === lane.id ? "selected" : ""}>${escapeHtml(lane.label)}</option>`).join("");
       const isSignal = item.kind === "signal" || item.kind === "guide";
       const isGuide = item.kind === "guide";
+      const isBlock = item.kind === "block";
       inspector.innerHTML = `
         <h2>${isGuide ? "Guide line" : isSignal ? "Signal marker" : "Duration block"}</h2>
         <div class="editor">
@@ -1142,7 +1251,11 @@
             : `<label>Start <input id="itemStart" type="number" step="1" value="${item.start}" /></label>
                <label>End <input id="itemEnd" type="number" step="1" value="${item.end}" /></label>`}
           <label>Notes <textarea id="itemNotes">${escapeHtml(item.notes || "")}</textarea></label>
-          <button id="deleteItem">Delete item</button>
+          <div class="buttonRow">
+            <button id="focusItem" data-readonly-action="true">Focus</button>
+            ${isBlock ? `<button id="duplicateBlock">Duplicate block</button>` : ""}
+            <button id="deleteItem">Delete item</button>
+          </div>
         </div>
       `;
       document.getElementById("itemLabel").addEventListener("input", ev => { item.label = ev.target.value || (isSignal ? "Signal" : "Block"); render(); });
@@ -1166,6 +1279,14 @@
         document.getElementById("itemType").addEventListener("change", ev => { item.type = ev.target.value; render(); });
       }
       document.getElementById("itemNotes").addEventListener("input", ev => { item.notes = ev.target.value; });
+      document.getElementById("focusItem").addEventListener("click", () => {
+        focusObject(item);
+      });
+      if (isBlock) {
+        document.getElementById("duplicateBlock").addEventListener("click", () => {
+          duplicateBlock(item);
+        });
+      }
       if (isSignal) {
         document.getElementById("itemCycle").addEventListener("change", ev => { item.cycle = clampCycle(Number(ev.target.value) || 0); render(); });
       } else {
@@ -1183,6 +1304,7 @@
       document.getElementById("deleteItem").addEventListener("click", () => {
         deleteSelected();
       });
+      applyEditingLock();
     }
 
     function clampCycle(cycle) {
@@ -1245,6 +1367,7 @@
     }
 
     function deleteSelected() {
+      if (state.editingLocked) return;
       if (!state.selected) return;
       if (state.selected.type === "lane") {
         const lane = getLane(state.selected.id);
@@ -1270,6 +1393,7 @@
     }
 
     function resetCanvas() {
+      if (state.editingLocked) return;
       if (!confirm("Reset canvas to a blank timeline? This removes all lanes, items, and view settings.")) return;
       commitHistory();
       model.axis = { ...DEFAULT_AXIS };
@@ -1333,6 +1457,7 @@
     }
 
     function importJson(payload) {
+      if (state.editingLocked) return;
       if (!payload || !Array.isArray(payload.lanes) || !Array.isArray(payload.items)) {
         throw new Error("Invalid canvas JSON: missing lanes or items.");
       }
@@ -1630,9 +1755,17 @@
     window.addEventListener("keydown", ev => {
       if (!(ev.ctrlKey || ev.metaKey)) return;
       const key = ev.key.toLowerCase();
-      if (key !== "z" && key !== "y") return;
       const ae = document.activeElement;
       if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
+      if (key === "d") {
+        const item = selectedObject();
+        if (!item || item.kind !== "block" || state.editingLocked) return;
+        ev.preventDefault();
+        duplicateBlock(item);
+        return;
+      }
+      if (key !== "z" && key !== "y") return;
+      if (state.editingLocked) return;
       ev.preventDefault();
       if (key === "y" || (key === "z" && ev.shiftKey)) redo();
       else undo();
@@ -1673,8 +1806,6 @@
       let currentDriverId = null;
       let isDriver = false;
       const metaStrip = document.querySelector(".metaStrip");
-      const toolbar = document.querySelector(".toolbar");
-      const canvasWrap = document.getElementById("canvasWrap");
 
       function updatePresenceUI(users) {
         const me = users.find(u => u.id === clientId);
@@ -1703,18 +1834,9 @@
           document.getElementById("takeControlBtn").onclick = () => socket.send(JSON.stringify({ type: 'request_control' }));
         }
 
-        // Lock / Unlock UI
-        if (isDriver) {
-          toolbar.style.opacity = "1";
-          toolbar.style.pointerEvents = "auto";
-          canvasWrap.style.pointerEvents = "auto";
-          document.querySelectorAll("aside button, aside input, aside select, aside textarea").forEach(el => el.disabled = false);
-        } else {
-          toolbar.style.opacity = "0.6";
-          toolbar.style.pointerEvents = "none";
-          canvasWrap.style.pointerEvents = "none";
-          document.querySelectorAll("aside button, aside input, aside select, aside textarea").forEach(el => el.disabled = true);
-        }
+        // Lock editing for observers, but keep read-only actions such as export and focus available.
+        state.editingLocked = !isDriver;
+        applyEditingLock();
       }
 
       socket.addEventListener("open", () => {
