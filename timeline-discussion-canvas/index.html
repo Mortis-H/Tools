@@ -1022,14 +1022,22 @@
         const y = laneY(index);
         const selected = state.selected && state.selected.type === "lane" && state.selected.id === lane.id;
         const laneFill = hexToRgba(lane.color || "#1e293b", lane.opacity ?? 0.62);
-        root.appendChild(make("rect", {
+        const laneBg = make("rect", {
           class: selected ? "laneBg laneSelected" : "laneBg",
           x: bgLeft,
           y,
           width: bgWidth,
           height: layout.laneHeight,
           style: `fill:${laneFill}`
-        }));
+        });
+        laneBg.addEventListener("pointerdown", ev => {
+          ev.stopPropagation();
+          ev.preventDefault();
+          state.selected = { type: "lane", id: lane.id };
+          showLaneInspector(lane);
+          render();
+        });
+        root.appendChild(laneBg);
         const label = make("text", { class: "laneLabel", x: labelX, y: y + 24 }, lane.label);
         label.addEventListener("pointerdown", ev => {
           ev.stopPropagation();
