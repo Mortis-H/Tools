@@ -607,7 +607,7 @@
       <div class="card compact">
         <h3>Fast workflow</h3>
         <ul>
-          <li>Pick an add mode, then click the canvas.</li>
+          <li>Pick an add mode, move the preview, then click the canvas to place it.</li>
           <li>Select an object, press <code>Ctrl+C</code>, then click the canvas to place a snapped copy.</li>
           <li>Drag the canvas to pan; use the wheel to zoom time around the pointer.</li>
           <li>Export JSON when the discussion state should travel with the note.</li>
@@ -656,6 +656,7 @@
       renderPending: false,
       showTimeTicks: false,
       editingLocked: false,
+      addPreview: null,
       copyPlacement: null,
       snapGuideCycle: null,
       ignoreNextMouseDown: false
@@ -836,7 +837,9 @@
       state.draggingItem = null;
       state.resizingItem = null;
       state.lastPointer = null;
+      state.addPreview = null;
       state.copyPlacement = null;
+      svg.style.cursor = "";
       clearSnapGuide();
       document.getElementById("addBlock")?.classList.remove("active");
       document.getElementById("addSignal")?.classList.remove("active");
@@ -852,6 +855,9 @@
       const canvasWrap = document.getElementById("canvasWrap");
       if (state.editingLocked) {
         state.addMode = null;
+        state.addPreview = null;
+        state.copyPlacement = null;
+        svg.style.cursor = "";
         document.getElementById("addBlock")?.classList.remove("active");
         document.getElementById("addSignal")?.classList.remove("active");
         document.getElementById("addGuide")?.classList.remove("active");
@@ -916,7 +922,7 @@
       drawAxis(root);
       drawLanes(root);
       drawItems(root);
-      drawCopyPreview(root);
+      drawPlacementPreview(root);
       drawSnapGuide(root);
       saveLocal();
     }
@@ -955,9 +961,10 @@
       }));
     }
 
-    function drawCopyPreview(root) {
-      if (!state.copyPlacement || !state.copyPlacement.preview) return;
-      drawPreviewItem(root, state.copyPlacement.preview);
+    function drawPlacementPreview(root) {
+      const preview = state.copyPlacement?.preview || state.addPreview;
+      if (!preview) return;
+      drawPreviewItem(root, preview);
     }
 
     function drawPreviewItem(root, item) {
@@ -1033,6 +1040,7 @@
         laneBg.addEventListener("pointerdown", ev => {
           ev.stopPropagation();
           ev.preventDefault();
+          if (handlePlacementPointerDown(ev)) return;
           state.selected = { type: "lane", id: lane.id };
           showLaneInspector(lane);
           render();
@@ -1042,6 +1050,7 @@
         label.addEventListener("pointerdown", ev => {
           ev.stopPropagation();
           ev.preventDefault();
+          if (handlePlacementPointerDown(ev)) return;
           state.selected = { type: "lane", id: lane.id };
           showLaneInspector(lane);
           render();
@@ -1130,6 +1139,7 @@
     function startItemDrag(item, ev) {
       ev.stopPropagation();
       ev.preventDefault();
+      if (handlePlacementPointerDown(ev)) return;
       if (state.resizingItem) return;
       state.selected = { type: "item", id: item.id };
       showItemInspector(item);
@@ -1201,6 +1211,54 @@
       return copy;
     }
 
+    function createPlacementItem(kind, lane, cycle, assignId = false) {
+      const id = assignId ? `item-${Date.now()}-${state.itemSeq++}` : `preview-${kind}`;
+      if (kind === "guide") {
+        return {
+          id,
+          kind: "guide",
+          laneId: lane.id,
+          cycle,
+          label: "Guide",
+          type: "guide",
+          lineColor: "#f8fafc",
+          labelBoxColor: "#0f172a",
+          notes: ""
+        };
+      }
+      if (kind === "signal") {
+        return {
+          id,
+          kind: "signal",
+          laneId: lane.id,
+          cycle,
+          label: "Signal",
+          type: "signal",
+          notes: ""
+        };
+      }
+      const duration = 12;
+      const start = Math.min(cycle, Math.max(0, model.axis.max - duration));
+      return {
+        id,
+        kind: "block",
+        laneId: lane.id,
+        start,
+        end: Math.min(model.axis.max, start + duration),
+        label: "Block",
+        type: "custom",
+        notes: ""
+      };
+    }
+
+    function updateAddPreview(ev) {
+      if (!state.addMode) return;
+      const point = viewPointFromClient(ev);
+      const lane = laneFromViewY(point.y);
+      const cycle = snapCycle(cycleFromViewX(point.x));
+      state.addPreview = createPlacementItem(state.addMode, lane, cycle);
+    }
+
     function updatePlacementPreview(ev) {
       if (!state.copyPlacement) return;
       const point = viewPointFromClient(ev);
@@ -1220,6 +1278,14 @@
       state.copyPlacement.preview = preview;
     }
 
+    function clearPlacementCursor() {
+      if (state.addMode || state.copyPlacement) {
+        svg.style.cursor = "copy";
+      } else {
+        svg.style.cursor = "";
+      }
+    }
+
     function beginCopyPlacement(item) {
       if (state.editingLocked || !item || state.selected?.type !== "item") return;
       state.addMode = null;
@@ -1233,7 +1299,7 @@
       document.getElementById("addBlock")?.classList.remove("active");
       document.getElementById("addSignal")?.classList.remove("active");
       document.getElementById("addGuide")?.classList.remove("active");
-      svg.style.cursor = "copy";
+      clearPlacementCursor();
       clearSnapGuide();
       render();
     }
@@ -1241,7 +1307,19 @@
     function cancelCopyPlacement() {
       if (!state.copyPlacement) return;
       state.copyPlacement = null;
-      svg.style.cursor = "";
+      clearPlacementCursor();
+      clearSnapGuide();
+      render();
+    }
+
+    function cancelAddPlacement() {
+      if (!state.addMode && !state.addPreview) return;
+      state.addMode = null;
+      state.addPreview = null;
+      document.getElementById("addBlock")?.classList.remove("active");
+      document.getElementById("addSignal")?.classList.remove("active");
+      document.getElementById("addGuide")?.classList.remove("active");
+      clearPlacementCursor();
       clearSnapGuide();
       render();
     }
@@ -1255,12 +1333,45 @@
       copy.id = `item-${Date.now()}-${state.itemSeq++}`;
       model.items.push(copy);
       state.copyPlacement = null;
-      svg.style.cursor = "";
+      clearPlacementCursor();
       clearSnapGuide();
       state.ignoreNextMouseDown = true;
       state.selected = { type: "item", id: copy.id };
       showItemInspector(copy);
       render();
+    }
+
+    function placeAddAt(ev) {
+      if (state.editingLocked || !state.addMode) return;
+      updateAddPreview(ev);
+      const item = state.addPreview;
+      if (!item) return;
+      commitHistory();
+      item.id = `item-${Date.now()}-${state.itemSeq++}`;
+      model.items.push(item);
+      state.selected = { type: "item", id: item.id };
+      state.addPreview = null;
+      state.addMode = null;
+      document.getElementById("addBlock")?.classList.remove("active");
+      document.getElementById("addSignal")?.classList.remove("active");
+      document.getElementById("addGuide")?.classList.remove("active");
+      clearPlacementCursor();
+      clearSnapGuide();
+      state.ignoreNextMouseDown = true;
+      showItemInspector(item);
+      render();
+    }
+
+    function handlePlacementPointerDown(ev) {
+      if (state.copyPlacement) {
+        placeCopyAt(ev);
+        return true;
+      }
+      if (state.addMode) {
+        placeAddAt(ev);
+        return true;
+      }
+      return false;
     }
 
     function addLane() {
@@ -1818,11 +1929,17 @@
     });
 
     function setAddMode(kind) {
+      if (state.editingLocked) return;
       cancelCopyPlacement();
-      state.addMode = state.addMode === kind ? null : kind;
+      const nextMode = state.addMode === kind ? null : kind;
+      state.addMode = nextMode;
+      state.addPreview = null;
       document.getElementById("addBlock").classList.toggle("active", state.addMode === "block");
       document.getElementById("addSignal").classList.toggle("active", state.addMode === "signal");
       document.getElementById("addGuide").classList.toggle("active", state.addMode === "guide");
+      clearSnapGuide();
+      clearPlacementCursor();
+      render();
     }
 
     function itemFromEventTarget(target) {
@@ -1834,17 +1951,10 @@
     svg.addEventListener("pointerdown", ev => {
       ev.preventDefault();
       if (state.resizingItem) return;
-      if (state.copyPlacement) {
-        placeCopyAt(ev);
-        return;
-      }
+      if (handlePlacementPointerDown(ev)) return;
       const item = itemFromEventTarget(ev.target);
       if (item) {
         startItemDrag(item, ev);
-        return;
-      }
-      if (state.addMode) {
-        addItemAt(ev, state.addMode);
         return;
       }
       state.draggingCanvas = true;
@@ -1863,6 +1973,12 @@
     });
 
     svg.addEventListener("pointermove", ev => {
+      if (state.addMode) {
+        ev.preventDefault();
+        updateAddPreview(ev);
+        render();
+        return;
+      }
       if (state.copyPlacement) {
         ev.preventDefault();
         updatePlacementPreview(ev);
@@ -1893,7 +2009,7 @@
       state.lastPointer = null;
       state.draggingItem = null;
       state.resizingItem = null;
-      if (!state.copyPlacement) clearSnapGuide();
+      if (!state.copyPlacement && !state.addMode) clearSnapGuide();
       if (shouldRefreshSelection || hadSnapGuide) scheduleRender();
     });
 
@@ -1915,7 +2031,7 @@
       state.resizingItem = null;
       state.draggingCanvas = false;
       state.lastPointer = null;
-      if (!state.copyPlacement) clearSnapGuide();
+      if (!state.copyPlacement && !state.addMode) clearSnapGuide();
       if (shouldRefreshSelection || hadSnapGuide) scheduleRender();
     });
 
@@ -1970,9 +2086,10 @@
     inspector.addEventListener("focusin", commitHistory);
 
     window.addEventListener("keydown", ev => {
-      if (ev.key === "Escape" && state.copyPlacement) {
+      if (ev.key === "Escape" && (state.copyPlacement || state.addMode)) {
         ev.preventDefault();
         cancelCopyPlacement();
+        cancelAddPlacement();
         return;
       }
       if (!(ev.ctrlKey || ev.metaKey)) return;
