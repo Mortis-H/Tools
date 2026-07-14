@@ -2138,6 +2138,14 @@
 
     // --- Multiplayer Logic (Cloudflare Durable Objects) ---
     (function initMultiplayer() {
+      // 1. Security: Block known link preview bots (Teams, Slack, Discord, etc.) from joining
+      const ua = (window.navigator.userAgent || "").toLowerCase();
+      const isBot = navigator.webdriver || /skypeuripreview|teamsbot|slackbot|twitterbot|discordbot|whatsapp|telegrambot|bot|preview|spider|crawl/i.test(ua);
+      if (isBot) {
+        console.warn("Bot detected. Multiplayer disabled to protect room state.");
+        return;
+      }
+
       const clientId = Math.random().toString(36).substring(2, 10);
 
       // URL / Room Routing
@@ -2412,7 +2420,22 @@
         sendMessage({ type: 'cursor', clientId: clientId, name: userName, x: pt.x, y: pt.y, isLaser: isLaser });
       });
 
-      connectSocket();
+      // 2. Lazy connection: Only connect after the user interacts with the page
+      let hasConnected = false;
+      function onHumanInteraction() {
+        if (hasConnected) return;
+        hasConnected = true;
+        connectSocket();
+        window.removeEventListener("pointermove", onHumanInteraction);
+        window.removeEventListener("keydown", onHumanInteraction);
+        window.removeEventListener("touchstart", onHumanInteraction);
+        window.removeEventListener("wheel", onHumanInteraction);
+      }
+
+      window.addEventListener("pointermove", onHumanInteraction);
+      window.addEventListener("keydown", onHumanInteraction);
+      window.addEventListener("touchstart", onHumanInteraction);
+      window.addEventListener("wheel", onHumanInteraction);
 
       window.addEventListener("visibilitychange", () => {
         if (document.visibilityState !== "visible") return;
